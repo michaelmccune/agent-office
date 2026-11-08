@@ -4,6 +4,7 @@
 import type { AgentProvider } from '../../shared/providers.js';
 import type { StationKind } from '../../shared/layout.js';
 import type { WorkerHandle } from '../workers/types.js';
+import type { PermissionChoices, PermissionRole } from '../../shared/protocol.js';
 
 /** What a provider is set up with on one floor (see ProviderAdapter.prepare). */
 export interface ProviderFloor {
@@ -33,6 +34,8 @@ export interface LaunchInput<S, P> {
   cwd: string;
   /** What prepare set up on this floor. */
   setup: P;
+  /** Current office always-allow choices for this worker's role. */
+  permissions?: { role: PermissionRole; choices: PermissionChoices };
 }
 
 export interface LaunchPlan {

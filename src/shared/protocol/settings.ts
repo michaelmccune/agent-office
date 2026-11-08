@@ -170,6 +170,15 @@ export interface LeaveOnMergeState {
   at?: number;
 }
 
+export type PermissionRole = 'issues' | 'planning' | 'pulls' | 'worker';
+export type PermissionAction = 'officeState' | 'agentDiscussion' | 'pushBranch';
+export type PermissionChoices = Record<PermissionAction, boolean>;
+export interface AgentPermissionsState {
+  roles: Record<PermissionRole, PermissionChoices>;
+  by?: string;
+  at?: number;
+}
+
 export type SettingsClientMsg =
   /** Set the office's Slack / Discord webhook; '' removes it. */
   | { t: 'notify.webhook'; url: string }
@@ -190,7 +199,8 @@ export type SettingsClientMsg =
   /** Rewrite one of the office's prompts (admins only); null puts the default back. */
   | { t: 'prompts.set'; id: PromptId; text: string | null }
   /** Pick the worker everyone starts on (admins only); null goes back to the office's --agent. */
-  | { t: 'prompts.agent'; choice: AgentChoice | null };
+  | { t: 'prompts.agent'; choice: AgentChoice | null }
+  | { t: 'permissions.set'; role: PermissionRole; action: PermissionAction; enabled: boolean };
 
 export type SettingsServerMsg =
   | { t: 'upgrade'; state: UpgradeState }
@@ -201,4 +211,5 @@ export type SettingsServerMsg =
   | { t: 'theme'; state: ThemeState }
   | { t: 'map'; state: MapState }
   | { t: 'prompts'; state: PromptsState }
-  | { t: 'leaveOnMerge'; state: LeaveOnMergeState };
+  | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
+  | { t: 'permissions'; state: AgentPermissionsState };

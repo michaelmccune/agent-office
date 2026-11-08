@@ -38,3 +38,8 @@
 .volume input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--ink); background: var(--paper); box-shadow: 0 2px 0 var(--ink); }
 .volume input[type=range]:focus-visible::-webkit-slider-thumb { border-color: var(--accent); }
 .volume.muted input[type=range], .volume.muted .vol-pct { opacity: .45; }
+.permission-grid { display: grid; gap: 8px; }
+.permission-role { display: grid; grid-template-columns: minmax(100px, .7fr) repeat(3, minmax(120px, 1fr)); align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid rgba(43, 45, 66, .18); }
+.permission-choice { display: flex; align-items: center; gap: 6px; font-size: .85rem; }
+.permission-choice input { accent-color: var(--accent); }
+@media (max-width: 700px) { .permission-role { grid-template-columns: 1fr 1fr; } .permission-role strong { grid-column: 1 / -1; } }

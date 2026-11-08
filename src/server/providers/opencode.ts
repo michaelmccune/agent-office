@@ -2,7 +2,7 @@
 // reports statuses and usage snapshots on /hooks/opencode.
 import { toolAction } from '../../shared/actions.js';
 import { openCodeMcp } from '../office-workers.js';
-import { mergeOpenCodeConfigContent, OPENCODE_STATION_PERMISSION_RULES, openCodePluginSpecifier, writeOpenCodePlugin, type OpenCodeStatusEvent } from '../opencode.js';
+import { mergeOpenCodeConfigContent, openCodePermissionRules, openCodePluginSpecifier, writeOpenCodePlugin, type OpenCodeStatusEvent } from '../opencode.js';
 import { reportedUsage } from '../reported-usage.js';
 import type { WorkerHandle } from '../workers/types.js';
 import { truncate } from '../workers/util.js';
@@ -112,7 +112,7 @@ export const opencode: ProviderAdapter<StatusState, OpenCodeSetup> = {
   id: 'opencode',
   createState: () => ({}),
   prepare: ({ dataDir, mcpScript }) => ({ plugin: writeOpenCodePlugin(dataDir), mcpScript }),
-  launch({ h, args, prompt, resumeSessionId, station, setup }) {
+  launch({ h, args, prompt, resumeSessionId, station, setup, permissions }) {
     const { info } = h;
     if (resumeSessionId || info.model) args = withoutOpenCodeModel(args);
     if (!resumeSessionId && info.model) args.push('--model', info.model);
@@ -132,7 +132,7 @@ export const opencode: ProviderAdapter<StatusState, OpenCodeSetup> = {
           env.OPENCODE_CONFIG_CONTENT,
           openCodePluginSpecifier(setup.plugin),
           setup.mcpScript ? openCodeMcp(setup.mcpScript) : undefined,
-          setup.mcpScript && station ? OPENCODE_STATION_PERMISSION_RULES : undefined,
+          setup.mcpScript && permissions ? openCodePermissionRules(permissions.choices) : setup.mcpScript && station ? { 'agent-office_list_workers': 'allow', 'agent-office_tell_worker': 'allow' } : undefined,
         );
       },
     };

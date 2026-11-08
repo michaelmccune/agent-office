@@ -436,6 +436,34 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   // The dog on this floor: its name, breed and coat, for everyone here (see settings-dog.ts).
   const { section: dogSection, paint: paintDog } = dogSetting(net, (body) => setting('Office dog', 'floor', ...body));
 
+  const permissionLabels = { issues: 'Issue agent', planning: 'Planning agent', pulls: 'PR agent', worker: 'Desk workers' } as const;
+  const permissionActions = [
+    ['officeState', 'View office state'],
+    ['agentDiscussion', 'Discuss with other agents'],
+    ['pushBranch', 'Push its task branch'],
+  ] as const;
+  const permissionInputs = new Map<string, HTMLInputElement>();
+  const permissionRows = Object.entries(permissionLabels).map(([role, label]) => h('div.permission-role', {},
+    h('strong', {}, label),
+    ...permissionActions.map(([action, actionLabel]) => {
+      const input = h('input', { type: 'checkbox', 'aria-label': `${label}: ${actionLabel}` }) as HTMLInputElement;
+      permissionInputs.set(`${role}.${action}`, input);
+      input.addEventListener('change', () => net.send({ t: 'permissions.set', role: role as keyof typeof permissionLabels, action, enabled: input.checked }));
+      return h('label.permission-choice', {}, input, h('span', {}, actionLabel));
+    }),
+  ));
+  const permissionNote = h('p.setting-note');
+  const permissionSection = setting('Always-allow permissions', 'office', h('div.permission-grid', {}, ...permissionRows), permissionNote);
+  const paintPermissions = () => {
+    const state = store.permissions;
+    for (const [role, choices] of Object.entries(state.roles)) for (const [action, enabled] of Object.entries(choices)) {
+      const input = permissionInputs.get(`${role}.${action}`);
+      if (input) { input.checked = enabled; input.disabled = !store.me.admin; }
+    }
+    permissionNote.textContent = `These choices apply only to the named role for Claude Code and OpenCode. Actions left off keep the agent’s normal approval rules; other providers keep their native permission behavior.${state.by ? ` Last changed by ${state.by}${state.at ? ` ${timeAgo(state.at)}` : ''}.` : ''}`;
+  };
+  paintPermissions();
+
   // What the sky's doing, and which clock it keeps (see settings-sky.ts).
   const sky = outside && outsideSetting(net, outside, (body) => setting('Outside', 'office', ...body));
   const account = store.me.account;
@@ -470,6 +498,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       setting('Default worker', 'office', agentNow, agent.element, agentActions, agentNote),
       setting('Worker limit', 'office', limitRow, limitNote),
       setting('Workers whose pull request merged', 'office', leaveRow, leaveNote),
+      permissionSection,
       setting('Prompts', 'office', promptsOpen, promptsNote),
     ],
   };
@@ -513,6 +542,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
   const offTheme = store.on('theme', paintTheme);
   const offMap = store.on('map', paintMap);
   const offLeave = store.on('leaveOnMerge', paintLeave);
+  const offPermissions = [store.on('permissions', paintPermissions), store.on('me', paintPermissions)];
   const offLimit = [store.on('machine', paintLimit), store.on('me', paintLimit)];
   const offDir = [store.on('projectsDir', paintDir), store.on('me', paintDir)];
   const offPrompts = [store.on('prompts', paintAgent), store.on('prompts', paintPrompts), store.on('me', paintAgent), store.on('me', paintPrompts)];
@@ -525,6 +555,7 @@ export function openSettings(net: Net, settings: Settings, onChange: (s: Setting
       sky?.off();
       offMap();
       offLeave();
+      offPermissions.forEach((off) => off());
       offLimit.forEach((off) => off());
       offDir.forEach((off) => off());
       offPrompts.forEach((off) => off());

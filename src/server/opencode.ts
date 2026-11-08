@@ -24,10 +24,15 @@ export interface OpenCodeUsageEvent {
 export type OpenCodeHookEvent = OpenCodeStatusEvent | OpenCodeUsageEvent;
 
 /** OpenCode permission rules for the two Agent Office tools available to station agents without asking. */
-export const OPENCODE_STATION_PERMISSION_RULES = {
-  'agent-office_list_workers': 'allow',
-  'agent-office_tell_worker': 'allow',
+export const OPENCODE_PERMISSION_TOOLS = {
+  officeState: 'agent-office_list_workers',
+  agentDiscussion: 'agent-office_tell_worker',
+  pushBranch: 'agent-office_push_branch',
 } as const;
+
+export function openCodePermissionRules(choices: { officeState: boolean; agentDiscussion: boolean; pushBranch: boolean }) {
+  return Object.fromEntries(Object.entries(OPENCODE_PERMISSION_TOOLS).filter(([action]) => choices[action as keyof typeof OPENCODE_PERMISSION_TOOLS]).map(([, tool]) => [tool, 'allow']));
+}
 
 /**
  * Merge the per-process plugin, and the office's MCP server when there is one (`mcp`, see

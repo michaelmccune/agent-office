@@ -27,6 +27,7 @@ import { landedWork, landedWorkers, type Landed } from './leave-on-merge.js';
 import type { Ledger } from './usage.js';
 import type { Capacity } from './machine.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import type { OfficePermissions } from './permissions.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
 
@@ -43,6 +44,8 @@ export interface FloorContext {
   capacity: Capacity;
   /** The office's prompts and the worker everyone starts on, as set in ⚙️ Settings. */
   prompts: PromptSource;
+  /** Always-allow role choices, applied afresh to each worker run. */
+  permissions: OfficePermissions;
   /** Workers hired by an account run on its own sign-ins (see signins.ts). */
   runAs?: RunAs;
   /** How to run gh as an account: its own sign-in, the office's (undefined), or why it can't. */
@@ -204,6 +207,7 @@ export class Floor {
       ctx.prompts,
       ctx.runAs,
       ctx.dshProfile,
+      ctx.permissions,
     );
     this.workers.wing = () => this.plan.wing;
 

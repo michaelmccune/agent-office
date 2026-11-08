@@ -28,8 +28,8 @@ export const BALL = {
    * on the side away from the coffee machine, so walking up to it doesn't pour you a coffee.
    */
   home: { x: HOOP.face + 0.7, z: HOOP.z - 0.8 },
-  /** The fastest anyone throws it, in m/s. */
-  maxSpeed: 16,
+  /** The fastest anyone throws it, in m/s; enough for a timed shot across the whole floor. */
+  maxSpeed: 24,
 } as const;
 
 /** A throw: where the ball left someone's hands, how fast, who threw it, and how long ago (ms) as the office sent it. */

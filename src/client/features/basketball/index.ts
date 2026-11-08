@@ -96,7 +96,7 @@ export function installBasketball(ctx: Ctx, deps: BasketballDeps) {
     const toRim = Math.atan2(rim.x - from.x, rim.z - from.z);
     const off = Math.abs(Math.atan2(Math.sin(toRim - facing), Math.cos(toRim - facing)));
     const far = Math.hypot(rim.x - from.x, rim.z - from.z);
-    const atHoop = off < (first ? 0.35 : 0.6) && far < 16 && far > 0.4;
+    const atHoop = off < (first ? 0.35 : 0.6) && far > 0.4;
     if (first) {
       const look = throwPitch(player.lookPitch);
       const pitch = atHoop ? underCeiling(from, look) : look;

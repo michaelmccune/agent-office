@@ -22,14 +22,20 @@ function shoot(dist: number, power: number, hits?: BallHit[]) {
   return s;
 }
 
-test('a shot let go of right in the sweet spot drops through the ring, from close up to way out', () => {
-  for (const dist of [2, 4.2, 6, 9, 12, 15]) {
+test('a shot let go of right in the sweet spot drops through the ring, including beyond the old range', () => {
+  for (const dist of [2, 4.2, 6, 9, 12, 15, 20]) {
     const hits: BallHit[] = [];
     const s = shoot(dist, SWEET.at, hits);
     assert.ok(s.scored, `from ${dist} m`);
     assert.ok(!s.touched.rim && !s.touched.board, `nothing but net from ${dist} m`);
     assert.equal(hits.filter((h) => h.kind === 'score').length, 1, 'it goes in once');
   }
+});
+
+test('a clear shot from the far end of the floor is within shooting range', () => {
+  const from = { x: HOOP.rim.x + 35, y: 1.4, z: HOOP.z };
+  const pitch = underCeiling(from, throwPitch(lookAtRim(from)));
+  assert.notEqual(idealSpeed(from, pitch), null);
 });
 
 test('well short of the sweet spot, or at the top of the meter, misses (close in, a long one can still bank in)', () => {

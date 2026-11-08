@@ -6,11 +6,12 @@
 import type { StationKind } from '../shared/layout.js';
 import { floorRepository, floorRepositoryContext } from './github-context.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { workflowBrief } from './workflow/brief.js';
 
 /** The board agent's floor context, plus reviewer eligibility rules for the PR board. */
 export function stationScope(kind: StationKind, repo?: string): string {
   const target = floorRepository(repo);
-  const context = floorRepositoryContext(target);
+  const context = `${floorRepositoryContext(target)}\n\n${workflowBrief(kind)}`;
   if (kind !== 'pulls') return context;
   if (!target) return context;
   return [

@@ -8,6 +8,12 @@ The office keeps its data in `~/agent-office` (`--home` or `AGENT_OFFICE_HOME` t
 
 Already have a checkout? Pick its repository anyway: a checkout of it that's already where the workspace folder would clone it is used as it is. You can still start the office in a project, `agent-office ~/code/my-project`: that project becomes a floor, and the office keeps its data in `~/code/my-project/.agent-office` as it did before there were floors. An office that already ran in a project carries on in it when you start `agent-office` there again. An admin can take that project off the building in the elevator like any other floor.
 
+## Durable workflow configuration
+
+Each floor keeps its journal in `<checkout>/.agent-office/workflows.json`. The coordinator starts after workers restore, and acts only on explicitly authorized Issues handoffs. It uses existing default-provider, queue concurrency, worker capacity, budget and role-permission settings. Board roles require **Discuss with agents**; worker completion/fix handling requires **View office state**. Native provider approvals are preserved.
+
+Merge authority is **false by default per workflow**, separate from implementation authorization. Only the originating human session can grant it through `POST /api/workflows?floor=<id>`. The same JSON surface provides pause/resume/cancel/retry and replacement-task controls. Existing author/link/security restrictions, squash-only merging, exact-head review and GitHub protection still apply. See [Durable workflows](workflows.md) for commands and recovery.
+
 ## Command line
 
 ```

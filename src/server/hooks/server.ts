@@ -7,6 +7,7 @@ import type { Ctx } from '../office/context.js';
 import { readBody, send } from '../http/util.js';
 import { officeQueue } from './office-queue.js';
 import { officeWorkers } from './office-workers.js';
+import { officeWorkflow } from '../workflow/hook.js';
 import { providerHook } from '../providers/index.js';
 import type { AgentProvider } from '../../shared/providers.js';
 
@@ -20,6 +21,7 @@ export async function startHookServer(ctx: Ctx): Promise<{ hookServer: http.Serv
       return send(res, 400, {});
     }
     if (url.pathname === '/office/queue') return officeQueue(ctx, req, res, url);
+    if (url.pathname === '/office/workflow' || url.pathname.startsWith('/office/workflow/')) return officeWorkflow(ctx, req, res, url);
     if (url.pathname === '/office/workers' || url.pathname.startsWith('/office/workers/')) return officeWorkers(ctx, req, res, url);
     // Each provider with hooks has its route, /hooks/<provider> (see providers/).
     const route = url.pathname.startsWith('/hooks/') ? url.pathname.slice('/hooks/'.length) : '';

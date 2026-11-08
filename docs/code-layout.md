@@ -59,6 +59,10 @@ They're in `core/registry.ts`, and each is a field of `ctx`. Every registration 
 
 The rest of `src/server/` is a module per service or per thing a floor keeps (`dog.ts`, `jukebox.ts`, `queue.ts`, `meetings.ts`), made by the office or by each `Floor` (`floor.ts`).
 
+### Workflow adapters
+
+`src/server/workflow/` owns durable issue-to-review orchestration, its journal, policy/GitHub gateway, station/queue/worktree adapters and HTTP endpoints. `Floor` only installs/stops it. `queue-admission.ts` registers task seating guards and crash-recovery lookups; `workers/worktree-factories.ts` registers scoped worktree policies. Ordinary queue and worker behavior remains the fallback. Workflow code belongs in these modules, not the main/server composition roots, client store or protocol.
+
 ## Shared
 
 - **`protocol.ts`** is the wire protocol. It puts the domain files in `protocol/<domain>.ts` back together (`export *`) and makes the `ClientMsg` and `ServerMsg` unions every frame is one of. Keep `import type` between domain files: some name each other's types (`floors.ts` and `presence.ts` do), which only type imports can do without a cycle at run time.

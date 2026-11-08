@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { strictWorktree } from '../src/server/workflow/adapters.js';
+import { fixture, issueInput } from './support/workflow.js';
+
+test('workflow worktrees start from freshly fetched origin/main, never local-only commits, and fail closed on fetch/account/repository failure', async (t) => {
+  const f = fixture(t); await f.coordinator.ready(f.actor('issues'), issueInput());
+  const dir = mkdtempSync(path.join(tmpdir(), 'workflow-git-'));
+  t.after(() => rmSync(dir, { force: true, recursive: true }));
+  const remote = path.join(dir, 'remote.git'), repo = path.join(dir, 'checkout');
+  mkdirSync(repo);
+  const git = (args: string[], cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  git(['init', '--bare', '--initial-branch=main', remote], dir);
+  git(['init', '--initial-branch=main']);
+  git(['config', 'user.name', 'Workflow integration']); git(['config', 'user.email', 'workflow@example.test']);
+  writeFileSync(path.join(repo, 'source'), 'remote main'); git(['add', 'source']); git(['commit', '-m', 'remote baseline']);
+  const base = git(['rev-parse', 'HEAD']);
+  git(['remote', 'add', 'origin', 'git@github.com:michaelmccune/agent-office.git']);
+  // Origin identity stays explicitly GitHub; git transports it to a local bare remote for this test.
+  git(['config', `url.file://${remote}.insteadOf`, 'git@github.com:michaelmccune/agent-office.git']);
+  git(['push', 'origin', 'main']);
+  writeFileSync(path.join(repo, 'source'), 'unpublished local main'); git(['commit', '-am', 'local only']);
+  const localHead = git(['rev-parse', 'HEAD']);
+  const run = ((cmd: string, args: string[], options: object) => cmd === 'gh' ? 'originator\n' : execFileSync(cmd, args, options)) as typeof execFileSync;
+  const made = strictWorktree(repo, 'implementation', f.state, () => undefined, run);
+  if (typeof made === 'string') throw new Error(made);
+  assert.equal(made.base, base); assert.equal(made.from, 'main');
+  assert.equal(git(['rev-parse', 'HEAD'], path.join(repo, made.path)), base);
+  assert.equal(git(['rev-parse', 'HEAD']), localHead, 'shared checkout stays on its own local commit');
+  const wrong = ((cmd: string, args: string[], options: object) => cmd === 'gh' ? 'someone-else\n' : execFileSync(cmd, args, options)) as typeof execFileSync;
+  assert.match(String(strictWorktree(repo, 'wrong-account', f.state, () => undefined, wrong)), /login changed/);
+  assert.match(String(strictWorktree(repo, 'no-permission', f.state, () => 'Sign in first', run)), /Sign in first/);
+  git(['remote', 'set-url', 'origin', 'git@github.com:wrong/repo.git']);
+  assert.match(String(strictWorktree(repo, 'wrong-repo', f.state, () => undefined, run)), /origin no longer matches/);
+  git(['remote', 'set-url', 'origin', 'git@github.com:michaelmccune/agent-office.git']);
+  rmSync(remote, { force: true, recursive: true });
+  assert.match(String(strictWorktree(repo, 'offline', f.state, () => undefined, run)), /requires a fresh origin\/main/);
+});

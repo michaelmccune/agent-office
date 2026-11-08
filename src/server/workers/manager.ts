@@ -31,6 +31,7 @@ import type { HookEnv, OpenedPr, RepoSource, RunAs, Worker, WorkerContext, Worke
 import { clamp, safeEq, truncate } from './util.js';
 import { COLORS, NAMES, newWorker } from './worker.js';
 import { WorkerTrees, lostMessage } from './worktree.js';
+import { createWorkerWorktree } from './worktree-factories.js';
 
 const SCREEN_INTERVAL_MS = 250;
 /** How often a steady typist's "last typed" time is refreshed for everyone. */
@@ -203,10 +204,7 @@ export class WorkerManager {
     }));
   }
 
-  /**
-   * Fetches the branch the project is on, so a worktree made next starts from what's on GitHub now
-   * (see Worktrees.fetch). Undefined when there's nothing to wait for.
-   */
+  /** Fetch the current project branch before ordinary worktree hires (see Worktrees.fetch). */
   fetchBase(): Promise<void> | undefined {
     return this.trees.fetch();
   }
@@ -257,7 +255,7 @@ export class WorkerManager {
     let others: WorkerRepo[] | undefined;
     if (worktree) {
       const slug = `${name.toLowerCase()}-${id.slice(0, 4)}`;
-      const made = repos.length ? this.makeWorkspace(slug, repos) : this.trees.create(slug);
+      const made = repos.length ? this.makeWorkspace(slug, repos) : createWorkerWorktree(this.trees, this.dir, slug, prompt);
       if (typeof made === 'string') return made;
       if ('repos' in made) {
         ({ worktree: wt, repos: others } = made);

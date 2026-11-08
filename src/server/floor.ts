@@ -27,6 +27,8 @@ import { landedWork, landedWorkers, type Landed } from './leave-on-merge.js';
 import type { Ledger } from './usage.js';
 import type { Capacity } from './machine.js';
 import { officePrompt, type PromptSource } from './prompts.js';
+import { installWorkflows } from './workflow/index.js';
+import type { WorkflowCoordinator } from './workflow/coordinator.js';
 import type { OfficePermissions } from './permissions.js';
 
 type ToastLevel = 'info' | 'warn' | 'error';
@@ -50,6 +52,8 @@ export interface FloorContext {
   runAs?: RunAs;
   /** How to run gh as an account: its own sign-in, the office's (undefined), or why it can't. */
   ghAs(owner: string | undefined): GhAs | undefined | string;
+  /** Whether an account still has authority to run autonomous work. */
+  accountActive?(owner: string): boolean;
   /** To everyone on this floor. */
   emit(floor: Floor, msg: ServerMsg, droppable?: boolean): void;
   toast(floor: Floor, text: string, level?: ToastLevel): void;
@@ -118,6 +122,8 @@ export class Floor {
   readonly workers: WorkerManager;
   readonly github: GitHub;
   readonly queue: TaskQueue;
+  /** Durable issue/task/review handoffs, distinct from queue worker-turn status. */
+  readonly workflows: WorkflowCoordinator;
   readonly changes: Changes;
   readonly decor: Decor;
   /** The signs over its desks, and how far its back office is built out. */
@@ -317,6 +323,7 @@ export class Floor {
     this.jukebox = new Jukebox(dataDir);
     this.whiteboard = new Whiteboard(dataDir);
     this.ready = this.workers.start();
+    this.workflows = installWorkflows(this, ctx, dataDir);
 
     void this.github.refresh();
     // A floor with people on it, or work under way, keeps its boards fresh; the others check in now and then.
@@ -423,6 +430,7 @@ export class Floor {
     this.dog.stop();
     this.github.stop();
     this.queue.shutdown();
+    this.workflows.shutdown();
     this.meetings.shutdown();
     this.changes.stop();
     this.whiteboard.flush();

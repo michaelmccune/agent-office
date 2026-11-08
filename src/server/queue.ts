@@ -1,11 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { isAgentProvider, type AgentChoice, type AgentEffort, type AgentProvider, type GhPull, type QueueState, type QueueTask, type WorkerInfo, type WorkerStatus } from '../shared/protocol.js';
 import { DESK_BY_ID, SEATS, nextFreeSeat } from '../shared/layout.js';
 import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { savedEffort, savedModel, takesEffort, takesModel } from '../shared/providers.js';
 import { PROMPTS } from '../shared/prompts.js';
+import { queueAdmitted, recoverQueuedTask } from './queue-admission.js';
+import { writeDurableJson } from './durable-json.js';
 
 /** What the queue needs from the worker manager. Narrow on purpose, so a smoke test can fake it. */
 export interface QueueWorkers {
@@ -111,7 +113,7 @@ export class TaskQueue {
       status: 'queued',
     };
     this.tasks.push(task);
-    this.changed();
+    if (!this.changed()) { this.tasks.pop(); return 'Cannot persist the task queue; check disk space and permissions before retrying'; }
     this.pump();
     return undefined;
   }
@@ -315,6 +317,9 @@ export class TaskQueue {
     let changed = false;
     for (const t of this.tasks) {
       if (t.status !== 'queued') continue;
+      if (!queueAdmitted(t)) continue;
+      const recovered = recoverQueuedTask(t);
+      if (recovered) { Object.assign(t, recovered); changed = true; continue; }
       if (this.busy() >= this.maxWorkers) break;
       // A spent budget holds the queue instead of failing every task; the pump seats them once hiring resumes.
       if (this.events.hiringPaused()) break;
@@ -363,15 +368,18 @@ export class TaskQueue {
   }
 
   private changed() {
-    this.persist();
+    if (!this.persist()) return false;
     this.events.update(this.state());
+    return true;
   }
 
   private persist() {
     try {
-      writeFileSync(this.statePath, JSON.stringify({ maxWorkers: this.maxWorkers, tasks: this.tasks }, null, 2), { mode: 0o600 });
-    } catch {
-      // disk issues shouldn't take the office down
+      writeDurableJson(this.statePath, { maxWorkers: this.maxWorkers, tasks: this.tasks });
+      return true;
+    } catch (error) {
+      this.events.toast(`Cannot persist the task queue: ${(error as Error).message}`, 'error');
+      return false;
     }
   }
 

@@ -72,6 +72,14 @@ OpenCode metrics come from assistant-message token/cost records exposed by its p
 
 DeepSeek Harness metrics come from ACP `usage_update`: tokens in context and the window's size, shown per worker and for the current desks, plus a session cost only when the harness reports one. The daily budget and historical ledger remain Claude-only.
 
+## Durable role handoffs
+
+The Issues agent explicitly marks implementation-authorized issues ready with `office-workflow ready`. Queue/Planning receives a durable event at `station-queue` and records a plan using `office-workflow plan`; the coordinator creates one replay-safe linked task. The implementation worker reports its PR, exact head and verification using `office-workflow complete`. Branch-based reconciliation also discovers missed PR notifications. Non-draft PRs reach `station-pulls`; `office-workflow review` records findings, waiting checks, human decisions or eligibility. Findings return to the same implementation worker, and updated heads receive new reviews.
+
+Absent board agents start on the office default provider/model under the originating account. Busy agents and native permission/question prompts wait. An occupied kiosk belonging to another account blocks delivery instead of borrowing credentials. Board roles require **Discuss with agents** for automatic workflow delivery; workers require **View office state** for completion/fix handling. Native provider permissions remain intact. Manual board/queue flows continue using their existing tools.
+
+Use `office-workflow list` for timeline, owner, next action, events, leases and blockers. Human controls use the existing signed-in session at `/api/workflows`; worker tokens cannot grant merge authority. See [Durable workflows](workflows.md).
+
 ## The office's prompts
 
 Everything the office tells a worker by itself can be rewritten in ⚙️ Settings → **🤖 Workers** → **📝 Edit the prompts…**: what **🤖 Hand to a worker**, **🔍 Review**, **Fix up & merge**, **Fix conflicts & merge** and **✍️ Ask a worker** send from the boards, what a meeting about an issue or a review panel starts with, the note the queue adds to a worktree task, the three board agents' briefs, every part the meeting room hands out, and the instructions for the model that writes the signs over workers' heads. Each one lists its `{{placeholders}}` (the issue number, the PR's branch, the file a meeting waits for…), which the office fills in when it sends it, and warns when one the office counts on is missing. **↺ Default** puts the office's own wording back. Admins edit them; they're the same on every floor and kept in `.agent-office/prompts.json` with the Default worker.

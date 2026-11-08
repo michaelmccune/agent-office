@@ -528,7 +528,7 @@ export class WorkerManager {
     return this.prs.openPr(id, by, as);
   }
 
-  /** Says which pull request is a worker's, or that none is (see WorkerPrs.link). */
+  pushBranch(id: string, as?: GhAs) { return this.prs.pushBranch(id, as); }
   linkPr(id: string, pr?: { number: number; url: string }): string | undefined {
     return this.prs.link(id, pr);
   }

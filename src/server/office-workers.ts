@@ -195,8 +195,8 @@ export function readPrRequest(body: unknown): PrRequest | string {
 export const MCP_NAME = 'agent-office';
 /** What it needs from the worker's environment; Codex hands an MCP server only what it's told to. */
 const MCP_ENV = ['AGENT_OFFICE_HOOK_URL', 'AGENT_OFFICE_WORKER_ID', 'AGENT_OFFICE_HOOK_TOKEN'];
-/** Its tools that only look, which Claude Code workers may call without asking. */
-export const MCP_READ_ONLY = [`mcp__${MCP_NAME}__list_workers`];
+/** The worker tools Claude Code may call without asking; writes are restricted to its assigned branch. */
+export const MCP_AUTO_APPROVED = [`mcp__${MCP_NAME}__list_workers`, `mcp__${MCP_NAME}__push_branch`];
 
 /**
  * Writes Claude Code's --mcp-config file for the MCP server (bin/office-workers.js `mcp`, run by the

@@ -7,10 +7,12 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { TOOLS, UsageError, buildRequest, formatHome, formatLinked, formatWorkers, handleMcp, main, parseArgs } from '../bin/office-workers.js';
-import { codexMcpArgs, findWorker, readHireRequest, readHomeRequest, readPrRequest, workerRow } from '../src/server/office-workers.js';
+import { TOOLS, UsageError, buildRequest, formatHome, formatLinked, formatPush, formatWorkers, handleMcp, main, parseArgs } from '../bin/office-workers.js';
+import { officeWorkers as handleOfficeWorkers } from '../src/server/hooks/office-workers.js';
+import { MCP_AUTO_APPROVED, codexMcpArgs, findWorker, readHireRequest, readHomeRequest, readPrRequest, workerRow } from '../src/server/office-workers.js';
 import { ownPr } from '../src/server/workers/pr.js';
 import { notLeaving } from '../src/server/leave-on-merge.js';
+import type { Ctx } from '../src/server/office/context.js';
 import type { GhPull, WorkerInfo } from '../src/shared/protocol.js';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'office-workers.js');
@@ -30,8 +32,58 @@ const pull = (number: number, state: string, headRefName: string, headRefOid?: s
   headRefName, headRefOid, baseRefName: 'main', createdAt: '', updatedAt: '', additions: 0, deletions: 0, checks: 'none', body: '', closes: [],
 });
 
+test('the worker push endpoint publishes only the authenticated worker and uses their GitHub sign-in', async (t) => {
+  const workerInfo = worker('w1');
+  const shellInfo = worker('shell', { kind: 'shell' });
+  const pushes: { id: string; as: unknown }[] = [];
+  const ghAsCalls: string[] = [];
+  const floor = {
+    def: { repo: 'acme/app' },
+    project: { branch: 'main' },
+    plan: { wing: 1 },
+    github: { pulls: { items: [] } },
+    queue: { state: () => ({ tasks: [] }) },
+    workers: {
+      authenticate: (id: string, token: string) => token === 'tok' ? ({ w1: workerInfo, shell: shellInfo }[id]) : undefined,
+      ownerOf: (id: string) => id === 'w1' ? 'account' : undefined,
+      pushBranch: async (id: string, as: unknown) => {
+        pushes.push({ id, as });
+        return { pushed: [{ repo: 'app', branch: 'office/w1' }], failed: [] };
+      },
+    },
+  };
+  const credentials = { key: 'account', env: { GH_CONFIG_DIR: '/account/gh' } };
+  const ctx = {
+    workerFloor: () => floor,
+    signins: { ghAs: (owner: string) => { ghAsCalls.push(owner); return credentials; } },
+  } as unknown as Ctx;
+  const server = http.createServer((req, res) => {
+    void handleOfficeWorkers(ctx, req, res, new URL(req.url ?? '/', 'http://127.0.0.1')).catch((err) => {
+      res.writeHead(500);
+      res.end(String(err));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/office/workers/push`;
+  const pushed = await fetch(`${url}?worker=w1`, { method: 'POST', headers: { authorization: 'Bearer tok', 'content-type': 'application/json' }, body: JSON.stringify({ branch: 'main', remote: 'attacker' }) });
+  assert.equal(pushed.status, 200);
+  assert.deepEqual(await pushed.json(), { pushed: [{ repo: 'app', branch: 'office/w1' }], failed: [] });
+  assert.deepEqual(pushes, [{ id: 'w1', as: credentials }], 'the request cannot supply a branch and the office pushes as the worker account');
+  assert.deepEqual(ghAsCalls, ['account']);
+
+  const refused = await fetch(`${url}?worker=w1`, { method: 'POST', headers: { authorization: 'Bearer wrong', 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(refused.status, 401);
+  const shell = await fetch(`${url}?worker=shell`, { method: 'POST', headers: { authorization: 'Bearer tok', 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(shell.status, 400);
+  assert.match((await shell.json()).error, /shell, not an agent/);
+  assert.equal(pushes.length, 1);
+});
+
 test('parses list, hire, home, tell, pr and mcp', () => {
   assert.deepEqual(parseArgs(['pr', '12']), { cmd: 'pr', pr: '12', json: false });
+  assert.deepEqual(parseArgs(['push']), { cmd: 'push', json: false });
+  assert.deepEqual(parseArgs(['push', '--json']), { cmd: 'push', json: true });
   assert.deepEqual(parseArgs(['pr', 'https://github.com/acme/app/pull/12', '--worker', 'Mochi', '--json']), { cmd: 'pr', pr: 'https://github.com/acme/app/pull/12', worker: 'Mochi', json: true });
   assert.deepEqual(parseArgs(['link-pr', '--none', '--worker=b0b']), { cmd: 'pr', unlink: true, worker: 'b0b', json: false });
   assert.deepEqual(parseArgs([]), { cmd: 'help' });
@@ -60,6 +112,7 @@ test('says what is wrong with a bad command line', () => {
     [['pr'], /pr takes one pull request/],
     [['pr', '12', '13'], /pr takes one pull request/],
     [['pr', '12', '--none'], /pr takes one pull request/],
+    [['push', 'office/other-worker'], /push takes no arguments/],
     [['tell', 'a', 'b'], /tell takes one worker/],
     [['hire', 'do it'], /Unexpected argument: do it/],
     [['hire', '--effort', 'huge'], /--effort is one of/],
@@ -82,6 +135,11 @@ test('builds requests for each call, with the worker and its token', () => {
   assert.ok(home.timeout > list.timeout, 'sending home waits on git');
   assert.equal(buildRequest('tell', OFFICE, {}).url, 'http://127.0.0.1:4455/office/workers/tell?worker=w1');
   assert.equal(buildRequest('pr', OFFICE, { pr: '12' }).url, 'http://127.0.0.1:4455/office/workers/pr?worker=w1');
+  const push = buildRequest('push', OFFICE);
+  assert.equal(push.url, 'http://127.0.0.1:4455/office/workers/push?worker=w1');
+  assert.equal(push.method, 'POST');
+  assert.equal(push.body, '{}');
+  assert.ok(push.timeout >= 300_000, 'publishing a worker across repositories may need several pushes');
   assert.equal(buildRequest('hire', OFFICE, {}).url, 'http://127.0.0.1:4455/office/workers?worker=w1');
 });
 
@@ -139,6 +197,14 @@ test('the command reads a prompt from stdin, reports refusals and exits non-zero
   assert.deepEqual(JSON.parse(String(calls[2].init.body)), { pr: '#7', worker: 'Bolt' });
   assert.match(calls[2].url, /\/office\/workers\/pr\?worker=w1$/);
   assert.equal(formatLinked({ worker: { name: 'Bolt' } }), 'Bolt has no pull request now.');
+  const published = await run(['push'], reply(200, { pushed: [{ repo: 'app', branch: 'office/w1' }], failed: [] }) as typeof fetch);
+  assert.deepEqual(published, { code: 0, out: '✓ Pushed office/w1 to origin in app', err: '' });
+  assert.match(calls[3].url, /\/office\/workers\/push\?worker=w1$/);
+  assert.deepEqual(JSON.parse(String(calls[3].init.body)), {});
+  const pushFailure = await run(['push'], reply(200, { pushed: [], failed: [{ repo: 'app', branch: 'office/w1', error: 'remote rejected the update' }] }) as typeof fetch);
+  assert.equal(pushFailure.code, 1);
+  assert.match(pushFailure.out, /Couldn't push office\/w1 to origin in app: remote rejected the update/);
+  assert.equal(formatPush({ pushed: [], failed: [] }), 'No assigned branches to push.');
   // What the office says is what's shown: there's no such worker, or it's too old to know this call.
   assert.match((await run(['pr', '7', '--worker', 'Nope'], reply(404, { error: 'No worker here is called Nope' }) as typeof fetch)).err, /^office-workers: No worker here is called Nope$/);
   assert.match((await run(['pr', '7'], reply(405, { error: 'GET /office/workers, or POST' }) as typeof fetch)).err, /older Agent Office than this command/);
@@ -159,7 +225,20 @@ test('answers MCP: the handshake, its tools, and a call', async () => {
   assert.equal((await handleMcp({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '1999-01-01' } }, io))?.result.protocolVersion, '2025-11-25');
   assert.equal(await handleMcp({ jsonrpc: '2.0', method: 'notifications/initialized' }, io), undefined);
   const tools = await handleMcp({ jsonrpc: '2.0', id: 3, method: 'tools/list' }, io);
-  assert.deepEqual(tools?.result.tools.map((t: { name: string }) => t.name), ['list_workers', 'hire_worker', 'send_home', 'tell_worker', 'link_pr']);
+  assert.deepEqual(tools?.result.tools.map((t: { name: string }) => t.name), ['list_workers', 'push_branch', 'hire_worker', 'send_home', 'tell_worker', 'link_pr']);
+  const pushed: { url: string; body: unknown }[] = [];
+  const publishing = {
+    env: ENV,
+    fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+      pushed.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ pushed: [], failed: [{ repo: 'app', branch: 'office/w1', error: 'permission denied' }] }));
+    }) as typeof fetch,
+  };
+  const pushCall = await handleMcp({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'push_branch', arguments: {} } }, publishing);
+  assert.equal(pushCall?.result.isError, true);
+  assert.match(pushCall?.result.content[0].text, /Couldn't push office\/w1 to origin in app: permission denied/);
+  assert.deepEqual(pushed, [{ url: 'http://127.0.0.1:4455/office/workers/push?worker=w1', body: {} }]);
+  assert.deepEqual(MCP_AUTO_APPROVED, ['mcp__agent-office__list_workers', 'mcp__agent-office__push_branch']);
   const linking = { env: ENV, fetch: (async (_url: unknown, init?: RequestInit) => new Response(JSON.stringify({ ok: true, worker: { name: 'Bolt', pr: { number: Number(JSON.parse(String(init?.body)).pr), state: 'open' }, merged: false } }))) as typeof fetch };
   const linked = await handleMcp({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'link_pr', arguments: { worker: 'Bolt', pr: 7 } } }, linking);
   assert.deepEqual(linked?.result, { content: [{ type: 'text', text: 'Bolt: PR #7 open' }] });
@@ -203,7 +282,7 @@ test('office-workers mcp serves a real client over stdio, as the worker', async 
   child.stdin!.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
   const listed = await ask({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_workers', arguments: {} } });
   assert.equal(JSON.parse(listed.result.content[0].text).workers[0].name, 'Bolt');
-  assert.deepEqual(seen, [{ url: '/office/workers?worker=w1', auth: 'Bearer sekrit', body: '' }]);
+  assert.deepEqual(seen.filter((r) => r.url.startsWith('/office/workers')), [{ url: '/office/workers?worker=w1', auth: 'Bearer sekrit', body: '' }]);
   assert.equal((await ask({ jsonrpc: '2.0', id: 3, method: 'ping' })).result && true, true);
   child.stdin!.end();
   assert.equal(await new Promise((r) => child.on('exit', r)), 0);

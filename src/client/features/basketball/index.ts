@@ -3,7 +3,7 @@
  * and letting it fly, baskets and streaks, and the ball in everyone's hands.
  */
 import * as THREE from 'three';
-import { HOOP, SWEET, idealSpeed, lookAtRim, meter, shotSpeed, throwPitch, tossSpeed, underCeiling } from '../../../shared/hoop';
+import { HOOP, SWEET, idealSpeed, lookAtRim, meter, scoringShot, shotSpeed, throwPitch, tossSpeed, underCeiling } from '../../../shared/hoop';
 import type { Ctx, Hint } from '../../core/context';
 import { aside, hintTitle, key, onE } from '../../core/hint';
 import { store } from '../../state';
@@ -122,6 +122,11 @@ export function installBasketball(ctx: Ctx, deps: BasketballDeps) {
     if (!holdingBall()) return;
     const a = shotAim();
     shooting = a.ideal !== null;
+    const tuned = shooting ? scoringShot(a.from, a.pitch) : null;
+    if (tuned) {
+      a.pitch = tuned.pitch;
+      a.ideal = tuned.speed;
+    }
     release(a.from, a.heading, a.pitch, shooting ? shotSpeed(a.ideal!, power) : tossSpeed(power));
     if (ctx.player.view === 'first') ctx.hands.shoot();
     else ctx.me.shoot();

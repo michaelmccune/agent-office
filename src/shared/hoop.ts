@@ -29,7 +29,7 @@ export const BALL = {
    */
   home: { x: HOOP.face + 0.7, z: HOOP.z - 0.8 },
   /** The fastest anyone throws it, in m/s; enough for a timed shot across the whole floor. */
-  maxSpeed: 24,
+  maxSpeed: 26,
 } as const;
 
 /** A throw: where the ball left someone's hands, how fast, who threw it, and how long ago (ms) as the office sent it. */
@@ -311,6 +311,50 @@ export function idealSpeed(from: { x: number; y: number; z: number }, pitch: num
   return v <= BALL.maxSpeed ? v : null;
 }
 
+/** An ideal timed shot angle and speed whose simulated path clears the rim and ceiling. */
+export interface ScoringShot {
+  pitch: number;
+  speed: number;
+}
+
+/**
+ * Find a scoreable trajectory near the preferred angle. The rim has a real tube and the ball has
+ * volume, so aiming a mathematical point at the ring's centre can clip its front edge on long arcs.
+ * Test candidate paths against the same rim/backboard/ceiling geometry used by the live flight.
+ * Other room colliders are deliberately left to the actual flight, where they continue to block it.
+ */
+export function scoringShot(from: { x: number; y: number; z: number }, preferredPitch: number): ScoringShot | null {
+  const ceiling: Solid = { ...FLOOR, bottom: WALL_HEIGHT, top: WALL_HEIGHT + 0.3 };
+  const staticSolids = [ceiling, backboard()];
+  let best: ScoringShot | null = null;
+  let bestDelta = Infinity;
+  for (let pitch = 0.1; pitch <= 1.4; pitch += 0.005) {
+    const speed = idealSpeed(from, pitch);
+    if (speed === null) continue;
+    const apex = from.y + (speed * Math.sin(pitch)) ** 2 / (2 * GRAVITY);
+    if (apex > WALL_HEIGHT - BALL.r) continue;
+    const dx = HOOP.rim.x - from.x;
+    const dz = HOOP.rim.z - from.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance <= 0.4) continue;
+    const horizontal = speed * Math.cos(pitch);
+    const sim = launch({
+      ...from,
+      vx: (dx / distance) * horizontal,
+      vy: speed * Math.sin(pitch),
+      vz: (dz / distance) * horizontal,
+    });
+    simulate(sim, 8, staticSolids);
+    if (!sim.scored) continue;
+    const delta = Math.abs(pitch - preferredPitch);
+    if (delta < bestDelta) {
+      best = { pitch, speed };
+      bestDelta = delta;
+    }
+  }
+  return best;
+}
+
 /**
  * How steeply to throw, looking `look` radians up from level: level ahead is 45° up, and looking
  * straight at the rim is the angle that drops the ball into it at 45°, steep enough to clear the
@@ -331,10 +375,10 @@ export function lookAtRim(from: { x: number; y: number; z: number }): number {
  */
 export function underCeiling(from: { x: number; y: number; z: number }, pitch: number): number {
   let p = pitch;
-  while (p > 0.5) {
+  while (p > 0.1) {
     const v = idealSpeed(from, p);
-    if (v !== null && from.y + (v * Math.sin(p)) ** 2 / (2 * GRAVITY) <= WALL_HEIGHT - BALL.r - 0.3) return p;
-    p -= 0.02;
+    if (v !== null && from.y + (v * Math.sin(p)) ** 2 / (2 * GRAVITY) <= WALL_HEIGHT - BALL.r) return p;
+    p -= 0.005;
   }
   return p;
 }

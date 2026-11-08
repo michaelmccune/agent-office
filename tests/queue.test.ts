@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { TaskQueue, type QueueWorkers } from '../src/server/queue.js';
+import { DEFAULT_MAX_WORKERS, TaskQueue, type QueueWorkers } from '../src/server/queue.js';
 import type { AgentEffort, AgentProvider, WorkerInfo } from '../src/shared/protocol.js';
 
 function fixture(defaultProvider: AgentProvider = 'claude') {
@@ -104,6 +104,58 @@ test('new and legacy tasks without a provider use the configured agent', (t) => 
   const q = f.open();
   q.add('New task', 'Tester'); q.setLimit(2);
   assert.deepEqual(f.workers.map((w) => w.provider), ['custom', 'custom']);
+});
+
+test('independent tasks start on separate workers and worktrees up to the available capacity', (t) => {
+  const f = fixture(); t.after(() => f.close());
+  const q = f.open(undefined, true);
+  assert.equal(q.limit, DEFAULT_MAX_WORKERS);
+  for (const prompt of ['Plan one', 'Plan two', 'Plan three', 'Plan four']) {
+    assert.equal(q.add(prompt, 'Tester'), undefined);
+  }
+
+  const tasks = q.state().tasks;
+  assert.deepEqual(tasks.map((task) => task.status), ['running', 'running', 'running', 'running']);
+  assert.equal(new Set(tasks.map((task) => task.workerId)).size, 4);
+  assert.equal(new Set(tasks.map((task) => task.branch)).size, 4);
+});
+
+test('tasks past current worker capacity stay queued and are seated as capacity opens', (t) => {
+  const f = fixture(); t.after(() => f.close());
+  const capacity = 2;
+  const q = f.open(() => capacity - f.workers.length);
+  for (const prompt of ['One', 'Two', 'Three', 'Four']) assert.equal(q.add(prompt, 'Tester'), undefined);
+  assert.deepEqual(q.state().tasks.map((task) => task.status), ['running', 'running', 'queued', 'queued']);
+
+  f.workers[0].status = 'done';
+  q.onWorker(f.workers[0]);
+  assert.deepEqual(q.state().tasks.map((task) => task.status), ['done', 'running', 'running', 'queued']);
+});
+
+test('legacy default parallelism expands to available seats while an explicit limit is preserved', (t) => {
+  const legacy = fixture(); t.after(() => legacy.close());
+  writeFileSync(path.join(legacy.dir, 'queue.json'), JSON.stringify({ maxWorkers: 3, tasks: [] }));
+  const q = legacy.open();
+  assert.equal(q.limit, DEFAULT_MAX_WORKERS);
+  for (const prompt of ['One', 'Two', 'Three', 'Four']) assert.equal(q.add(prompt, 'Tester'), undefined);
+  assert.deepEqual(q.state().tasks.map((task) => task.status), ['running', 'running', 'running', 'running']);
+
+  const custom = fixture(); t.after(() => custom.close());
+  const limited = custom.open();
+  limited.setLimit(3);
+  for (const prompt of ['One', 'Two', 'Three', 'Four']) assert.equal(limited.add(prompt, 'Tester'), undefined);
+  assert.deepEqual(limited.state().tasks.map((task) => task.status), ['running', 'running', 'running', 'queued']);
+  limited.shutdown();
+  assert.equal(custom.open().limit, 3);
+});
+
+test('the queue accepts more than 100 waiting tasks', (t) => {
+  const f = fixture(); t.after(() => f.close());
+  const q = f.open();
+  q.setLimit(0);
+  for (let i = 0; i < 101; i++) assert.equal(q.add(`Task ${i}`, 'Tester'), undefined);
+  assert.equal(q.state().tasks.length, 101);
+  assert.ok(q.state().tasks.every((task) => task.status === 'queued'));
 });
 
 test('invalid or unavailable providers are rejected before a task is queued', (t) => {

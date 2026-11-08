@@ -40,8 +40,8 @@ export interface QueueEvents {
   worktreeNote?(): string;
 }
 
-export const DEFAULT_MAX_WORKERS = 3;
-const MAX_TASKS = 100;
+export const DEFAULT_MAX_WORKERS = SEATS.length;
+const LEGACY_DEFAULT_MAX_WORKERS = 3;
 const PUMP_MS = 10_000;
 /** A worker in one of these states is finished with its task (and can make room for the next one). */
 const FINISHED = new Set<WorkerStatus>(['done', 'exited', 'offline']);
@@ -56,6 +56,7 @@ const FINISHED = new Set<WorkerStatus>(['done', 'exited', 'offline']);
 export class TaskQueue {
   private tasks: QueueTask[] = [];
   private maxWorkers = DEFAULT_MAX_WORKERS;
+  private maxWorkersExplicit = false;
   private statePath: string;
   private timer: NodeJS.Timeout;
   private pumping = false;
@@ -96,7 +97,6 @@ export class TaskQueue {
     const clean = prompt.replace(/\r\n?/g, '\n').trim();
     if (!clean) return 'Empty task';
     if (issue !== undefined && this.tasks.some((t) => t.issue === issue && t.status !== 'done')) return `Issue #${issue} is already on the queue`;
-    if (this.tasks.filter((t) => t.status !== 'done').length >= MAX_TASKS) return `The queue is full (${MAX_TASKS} tasks)`;
     const task: QueueTask = {
       id: randomBytes(6).toString('hex'),
       provider,
@@ -173,6 +173,7 @@ export class TaskQueue {
     const v = Math.max(0, Math.min(SEATS.length, Math.floor(n)));
     if (!Number.isFinite(v) || v === this.maxWorkers) return;
     this.maxWorkers = v;
+    this.maxWorkersExplicit = true;
     this.changed();
     this.pump();
   }
@@ -369,7 +370,7 @@ export class TaskQueue {
 
   private persist() {
     try {
-      writeFileSync(this.statePath, JSON.stringify({ maxWorkers: this.maxWorkers, tasks: this.tasks }, null, 2), { mode: 0o600 });
+      writeFileSync(this.statePath, JSON.stringify({ maxWorkers: this.maxWorkers, maxWorkersExplicit: this.maxWorkersExplicit, tasks: this.tasks }, null, 2), { mode: 0o600 });
     } catch {
       // disk issues shouldn't take the office down
     }
@@ -378,8 +379,14 @@ export class TaskQueue {
   private restore() {
     if (!existsSync(this.statePath)) return;
     try {
-      const saved = JSON.parse(readFileSync(this.statePath, 'utf8')) as { maxWorkers?: number; tasks?: Partial<QueueTask>[] };
-      if (typeof saved.maxWorkers === 'number' && Number.isFinite(saved.maxWorkers)) this.maxWorkers = Math.max(0, Math.min(SEATS.length, Math.floor(saved.maxWorkers)));
+      const saved = JSON.parse(readFileSync(this.statePath, 'utf8')) as { maxWorkers?: number; maxWorkersExplicit?: boolean; tasks?: Partial<QueueTask>[] };
+      if (typeof saved.maxWorkers === 'number' && Number.isFinite(saved.maxWorkers)) {
+        // Before the queue could use all available seats, three was its default. Treat that
+        // unmarked legacy value as the old default; a limit changed in this version is explicit.
+        const legacyDefault = saved.maxWorkersExplicit !== true && saved.maxWorkers === LEGACY_DEFAULT_MAX_WORKERS;
+        this.maxWorkers = legacyDefault ? DEFAULT_MAX_WORKERS : Math.max(0, Math.min(SEATS.length, Math.floor(saved.maxWorkers)));
+        this.maxWorkersExplicit = saved.maxWorkersExplicit === true;
+      }
       for (const s of saved.tasks ?? []) {
         if (typeof s.id !== 'string' || typeof s.prompt !== 'string' || typeof s.title !== 'string') continue;
         const provider = isAgentProvider(s.provider) ? s.provider : this.workers.defaultProvider;

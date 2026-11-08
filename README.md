@@ -344,6 +344,8 @@ agent-office accounts role ada member
 agent-office accounts revoke ada           # signed out within seconds
 ```
 
+When the shared password is off, the last admin can't be revoked or made a member; make another account an admin first.
+
 On the EC2 machine, run it through `deploy/aws.sh ssh` (on Azure, `deploy/azure.sh ssh`):
 
 ```bash

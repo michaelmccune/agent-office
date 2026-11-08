@@ -35,6 +35,7 @@ export const accountsHandlers = {
     const id = str(msg.accountId, 32);
     if (id === c.accountId) return ctx.warn(c, "You can't revoke your own account");
     const a = ctx.accounts.revoke(id);
+    if (typeof a === 'string') return ctx.warn(c, a);
     if (!a) return;
     console.log(`  ${who} revoked ${a.name}'s account`);
     ctx.toastAll(`${who} revoked ${a.name}'s account`);
@@ -49,6 +50,7 @@ export const accountsHandlers = {
     const id = str(msg.accountId, 32);
     if (id === c.accountId) return ctx.warn(c, "You can't change your own role");
     const a = ctx.accounts.setRole(id, msg.role === 'admin' ? 'admin' : 'member');
+    if (typeof a === 'string') return ctx.warn(c, a);
     if (!a) return;
     ctx.toastAll(a.role === 'admin' ? `${who} made ${a.name} an admin` : `${a.name} is no longer an admin`);
     ctx.accountsChanged();

@@ -9,6 +9,7 @@ export const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 512;
 const INVITE_TTL_MS = 7 * 24 * 60 * 60_000;
 const MAX_INVITES = 100;
+const LAST_ADMIN_ERROR = 'Make another account an admin before removing the last admin while the shared office password is off.';
 
 export interface Account {
   id: string;
@@ -185,21 +186,27 @@ export class Accounts {
   }
 
   /** Deletes an account. Its sessions stop working on their next request. */
-  revoke(id: string): Account | undefined {
+  revoke(id: string): Account | string | undefined {
     this.sync();
     const i = this.data.accounts.findIndex((a) => a.id === id);
     if (i < 0) return undefined;
+    if (this.data.sharedPassword === false && this.data.accounts[i].role === 'admin' && this.adminCount() === 1) return LAST_ADMIN_ERROR;
     const [a] = this.data.accounts.splice(i, 1);
     this.save();
     return a;
   }
 
-  setRole(id: string, role: AccountRole): Account | undefined {
+  setRole(id: string, role: AccountRole): Account | string | undefined {
     const a = this.get(id);
     if (!a) return undefined;
+    if (this.data.sharedPassword === false && a.role === 'admin' && role !== 'admin' && this.adminCount() === 1) return LAST_ADMIN_ERROR;
     a.role = role === 'admin' ? 'admin' : 'member';
     this.save();
     return a;
+  }
+
+  private adminCount(): number {
+    return this.data.accounts.filter((a) => a.role === 'admin').length;
   }
 
   setSharedPassword(on: boolean) {
@@ -360,12 +367,14 @@ export function accountsCommand(argv: string[]): number {
       const a = accounts.byName(arg);
       if (!a) return fail(`there's no account called ${arg}`);
       if (cmd === 'revoke') {
-        accounts.revoke(a.id);
-        console.log(`Revoked ${a.name}'s account. They're signed out of the office within seconds.`);
+        const revoked = accounts.revoke(a.id);
+        if (typeof revoked === 'string') return fail(revoked);
+        if (revoked) console.log(`Revoked ${a.name}'s account. They're signed out of the office within seconds.`);
         return 0;
       }
       if (arg2 !== 'admin' && arg2 !== 'member') return usage('role takes admin or member');
-      accounts.setRole(a.id, arg2);
+      const changed = accounts.setRole(a.id, arg2);
+      if (typeof changed === 'string') return fail(changed);
       console.log(`${a.name} is ${arg2 === 'admin' ? 'an admin' : 'a member'} now.`);
       return 0;
     }

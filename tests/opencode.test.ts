@@ -23,6 +23,52 @@ test('does not duplicate the generated plugin in inline config', () => {
   assert.deepEqual(merged.plugin, [plugin]);
 });
 
+test('only OpenCode station agents get automatic permission for listing and messaging workers', () => {
+  const existingPermissions = {
+    '*': 'ask',
+    'agent-office_*': 'ask',
+    'agent-office_tell_worker': 'ask',
+    bash: 'ask',
+  };
+  const existing = {
+    model: 'custom/provider-model',
+    plugin: ['file:///user/plugin.mjs'],
+    mcp: { another_server: { type: 'local', command: ['user-mcp'] } },
+    permission: existingPermissions,
+  };
+  const configFor = (station?: 'issues' | 'pulls' | 'queue') => {
+    const plan = opencode.launch({
+      h: { info: {}, state: opencode.createState!() } as never,
+      args: [],
+      station,
+      setup: { plugin: '/data/agent-office-opencode.mjs', mcpScript: '/bin/office-workers.js' },
+    });
+    const env = { OPENCODE_CONFIG_CONTENT: JSON.stringify(existing) };
+    plan.finishEnv!(env);
+    return JSON.parse(env.OPENCODE_CONFIG_CONTENT);
+  };
+
+  for (const station of ['issues', 'pulls', 'queue'] as const) {
+    const config = configFor(station);
+    assert.deepEqual(config.permission, {
+      ...existingPermissions,
+      'agent-office_list_workers': 'allow',
+      'agent-office_tell_worker': 'allow',
+    }, `${station} station permissions`);
+    assert.deepEqual(Object.keys(config.permission).slice(-2), ['agent-office_list_workers', 'agent-office_tell_worker']);
+    assert.equal(config.permission['agent-office_hire_worker'], undefined);
+    assert.deepEqual(config.mcp.another_server, existing.mcp.another_server);
+    assert.deepEqual(config.mcp['agent-office'], { type: 'local', command: [process.execPath, '/bin/office-workers.js', 'mcp'], enabled: true });
+    assert.equal(config.model, existing.model);
+    assert.deepEqual(config.plugin, [...existing.plugin, 'file:///data/agent-office-opencode.mjs']);
+  }
+
+  const worker = configFor();
+  assert.deepEqual(worker.permission, existingPermissions, 'ordinary workers keep the user permission config as-is');
+  assert.equal(worker.permission['agent-office_list_workers'], undefined);
+  assert.equal(worker.permission['agent-office_tell_worker'], 'ask', 'an ordinary worker keeps an explicit user approval rule');
+});
+
 test('an OpenCode worker is told its effort and model for a fresh session, and neither for a resumed one', () => {
   const launch = (info: { model?: string; effort?: string }, resumeSessionId?: string) => {
     const plan = opencode.launch({ h: { info, state: opencode.createState!() } as never, args: [], setup: { plugin: '/data/agent-office-opencode.mjs' }, resumeSessionId });

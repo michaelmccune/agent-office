@@ -23,11 +23,22 @@ export interface OpenCodeUsageEvent {
 
 export type OpenCodeHookEvent = OpenCodeStatusEvent | OpenCodeUsageEvent;
 
+/** OpenCode permission rules for the two Agent Office tools available to station agents without asking. */
+export const OPENCODE_STATION_PERMISSION_RULES = {
+  'agent-office_list_workers': 'allow',
+  'agent-office_tell_worker': 'allow',
+} as const;
+
 /**
  * Merge the per-process plugin, and the office's MCP server when there is one (`mcp`, see
  * openCodeMcp), into inline OpenCode config without touching user config files.
  */
-export function mergeOpenCodeConfigContent(existing: string | undefined, plugin: string, mcp?: Record<string, unknown>): string {
+export function mergeOpenCodeConfigContent(
+  existing: string | undefined,
+  plugin: string,
+  mcp?: Record<string, unknown>,
+  permissionRules?: Record<string, unknown>,
+): string {
   let config: Record<string, unknown> = {};
   if (existing) {
     try {
@@ -45,6 +56,20 @@ export function mergeOpenCodeConfigContent(existing: string | undefined, plugin:
   if (mcp) {
     const theirs = config.mcp && typeof config.mcp === 'object' && !Array.isArray(config.mcp) ? (config.mcp as Record<string, unknown>) : {};
     config.mcp = { ...theirs, ...mcp };
+  }
+  if (permissionRules) {
+    const current = config.permission;
+    if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) {
+      throw new Error('OPENCODE_CONFIG_CONTENT permission must be an object');
+    }
+    const permissions = { ...(current as Record<string, unknown> | undefined) };
+    // OpenCode evaluates matching rules in order. Reinsert exact tool rules after any user wildcard
+    // so station-specific allows take effect without changing the user's other permission rules.
+    for (const [tool, rule] of Object.entries(permissionRules)) {
+      delete permissions[tool];
+      permissions[tool] = rule;
+    }
+    config.permission = permissions;
   }
   return JSON.stringify(config);
 }

@@ -108,6 +108,8 @@ test('a board agent is told its rewritten brief', () => {
   const source: PromptSource = { text: (id) => (id === 'station.pulls' ? 'You review PRs. The request:' : PROMPTS[id].text), agent: () => undefined };
   assert.equal(stationBrief('pulls', source), 'You review PRs. The request:');
   assert.equal(stationBrief('issues', source), stationBrief('issues'));
+  assert.match(stationBrief('queue'), /agent-office_list_workers.*agent-office_tell_worker/s);
+  assert.match(stationBrief('queue'), /Other Agent Office tools keep the user's OpenCode permission settings/);
 });
 
 function queueFixture(t: { after(fn: () => void): void }, officeDefault: AgentChoice | undefined, note?: string) {

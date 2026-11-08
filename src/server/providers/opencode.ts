@@ -2,7 +2,7 @@
 // reports statuses and usage snapshots on /hooks/opencode.
 import { toolAction } from '../../shared/actions.js';
 import { openCodeMcp } from '../office-workers.js';
-import { mergeOpenCodeConfigContent, openCodePluginSpecifier, writeOpenCodePlugin, type OpenCodeStatusEvent } from '../opencode.js';
+import { mergeOpenCodeConfigContent, OPENCODE_STATION_PERMISSION_RULES, openCodePluginSpecifier, writeOpenCodePlugin, type OpenCodeStatusEvent } from '../opencode.js';
 import { reportedUsage } from '../reported-usage.js';
 import type { WorkerHandle } from '../workers/types.js';
 import { truncate } from '../workers/util.js';
@@ -112,7 +112,7 @@ export const opencode: ProviderAdapter<StatusState, OpenCodeSetup> = {
   id: 'opencode',
   createState: () => ({}),
   prepare: ({ dataDir, mcpScript }) => ({ plugin: writeOpenCodePlugin(dataDir), mcpScript }),
-  launch({ h, args, prompt, resumeSessionId, setup }) {
+  launch({ h, args, prompt, resumeSessionId, station, setup }) {
     const { info } = h;
     if (resumeSessionId || info.model) args = withoutOpenCodeModel(args);
     if (!resumeSessionId && info.model) args.push('--model', info.model);
@@ -128,7 +128,12 @@ export const opencode: ProviderAdapter<StatusState, OpenCodeSetup> = {
         // (see ../opencode.ts). Like its model, it's for a fresh session: a resumed one carries on with its own.
         env.AGENT_OFFICE_EFFORT = (!resumeSessionId && info.effort) || '';
         env.AGENT_OFFICE_MODEL = (!resumeSessionId && info.model) || '';
-        env.OPENCODE_CONFIG_CONTENT = mergeOpenCodeConfigContent(env.OPENCODE_CONFIG_CONTENT, openCodePluginSpecifier(setup.plugin), setup.mcpScript ? openCodeMcp(setup.mcpScript) : undefined);
+        env.OPENCODE_CONFIG_CONTENT = mergeOpenCodeConfigContent(
+          env.OPENCODE_CONFIG_CONTENT,
+          openCodePluginSpecifier(setup.plugin),
+          setup.mcpScript ? openCodeMcp(setup.mcpScript) : undefined,
+          setup.mcpScript && station ? OPENCODE_STATION_PERMISSION_RULES : undefined,
+        );
       },
     };
   },

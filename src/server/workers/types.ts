@@ -38,6 +38,23 @@ export interface OpenedPr {
   dirty: boolean;
 }
 
+/** A branch the worker published to its configured origin. */
+export interface PushedBranch {
+  repo: string;
+  branch: string;
+}
+
+/** One assigned branch that could not be published. */
+export interface FailedBranchPush extends PushedBranch {
+  error: string;
+}
+
+/** Results of publishing every branch assigned to a worker. */
+export interface PushResult {
+  pushed: PushedBranch[];
+  failed: FailedBranchPush[];
+}
+
 /**
  * Runs a worker as the account that hired it, on that account's own Claude and GitHub sign-ins
  * (see signins.ts). Workers hired without an account run as the office, as they always have.

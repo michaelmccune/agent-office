@@ -31,6 +31,8 @@ const USAGE = `Usage:
                                                 desk, from the worker's own branch, or by a Claude
                                                 Code worker running gh pr create
   office-workers pr --none [--worker <name|id>] take that pull request off the worker again
+  office-workers push [--json]                     publish your assigned worktree branch(es) to origin
+                                                 (failures name the repository, branch and git error)
   office-workers mcp                            serve these as MCP tools on stdio`;
 
 /** A mistake in how the command was called: the usage is shown with it. */
@@ -42,9 +44,9 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 /** How long the office may take to come back when it's restarting (a dev reload, an upgrade). */
 const RETRY_MS = 6000;
 /** Sending several workers home waits on git for each; hiring may fetch from GitHub first. */
-const TIMEOUT_MS = { list: 15_000, tell: 15_000, pr: 45_000, hire: 90_000, home: 300_000 };
+const TIMEOUT_MS = { list: 15_000, tell: 15_000, pr: 45_000, push: 900_000, hire: 90_000, home: 300_000 };
 /** Where each call goes, under /office/workers. */
-const PATHS = { list: '', hire: '', home: '/home', tell: '/tell', pr: '/pr' };
+const PATHS = { list: '', hire: '', home: '/home', tell: '/tell', pr: '/pr', push: '/push' };
 
 /**
  * Reads `--flag value` and `--flag=value` options, and the words that aren't options.
@@ -116,6 +118,11 @@ export function parseArgs(argv) {
     if (none ? words.length : words.length !== 1) throw new UsageError('pr takes one pull request, its number or URL, or --none to take it off (with --worker <name|id> when the worker isn\'t you)');
     return { cmd: 'pr', ...(none ? { unlink: true } : { pr: words[0] }), ...(opts['--worker'] !== undefined ? { worker: String(opts['--worker']).trim() } : {}), json: opts['--json'] === true };
   }
+  if (cmd === 'push') {
+    const { opts, words } = options(rest, [], ['--json']);
+    if (words.length) throw new UsageError(`push takes no arguments (got ${words.join(' ')})`);
+    return { cmd: 'push', json: opts['--json'] === true };
+  }
   if (cmd === 'hire') {
     const { opts, words } = options(rest, ['--prompt', '--provider', '--model', '--effort', '--desk', '--issue'], ['--no-worktree', '--json']);
     if (words.length) throw new UsageError(`Unexpected argument: ${words[0]} (give the task on stdin or with --prompt)`);
@@ -157,7 +164,7 @@ export function officeEnv(env) {
 
 /**
  * The HTTP request for one of the office's worker calls.
- * @param {'list' | 'hire' | 'home' | 'tell' | 'pr'} what
+ * @param {'list' | 'hire' | 'home' | 'tell' | 'pr' | 'push'} what
  * @param {{ url: string, worker: string, token: string }} office
  * @param {Record<string, unknown>} [body]
  * @returns {{ method: string, url: string, headers: Record<string, string>, body?: string, timeout: number }}
@@ -206,7 +213,7 @@ async function send(req, fetchImpl) {
 
 /**
  * Makes one call to the office; resolves to what it answered, or throws with why it said no.
- * @param {'list' | 'hire' | 'home' | 'tell' | 'pr'} what
+ * @param {'list' | 'hire' | 'home' | 'tell' | 'pr' | 'push'} what
  * @param {Record<string, unknown> | undefined} body
  * @param {{ env: Record<string, string | undefined>, fetch: typeof fetch }} io
  */
@@ -259,6 +266,13 @@ export function formatLinked(answer) {
   return `${w.name}: PR #${w.pr.number} ${w.pr.state}${w.pr.title ? ` “${w.pr.title}”` : ''}${w.merged ? (w.staying ? ` · landed, staying: ${w.staying}` : ' · landed: free to go home') : ''}`;
 }
 
+/** What the office published, with the Git error next to each branch it could not push. */
+export function formatPush(answer) {
+  const pushed = (answer?.pushed ?? []).map((p) => `✓ Pushed ${p.branch} to origin in ${p.repo}`);
+  const failed = (answer?.failed ?? []).map((p) => `✗ Couldn't push ${p.branch} to origin in ${p.repo}: ${p.error}`);
+  return [...pushed, ...failed].join('\n') || 'No assigned branches to push.';
+}
+
 // --- MCP ------------------------------------------------------------------------------------------
 
 /** The MCP protocol versions this server speaks; it answers in the client's when it knows it. */
@@ -277,6 +291,17 @@ export const TOOLS = [
       '(still working, someone has its terminal open, a board agent...). worktree.deleted: true means its folder was deleted outside the office, so it cannot start until a person rebuilds it at its desk. you: true is you.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: 'push_branch',
+    title: 'Push your assigned branch',
+    description:
+      "Publishes this worker's assigned worktree branch to its configured origin, without asking for permission to run git push. " +
+      'A worker across repositories publishes each of its assigned branches and gets the result or each repository-specific Git error. ' +
+      'No branch or remote can be supplied: the office pushes only the asking worker’s assigned branch(es). Use when you want reviewers to see your latest commits; then continue with the existing Open PR workflow. ' +
+      'Workers in the main checkout have no assigned worktree branch to publish.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'hire_worker',
@@ -365,13 +390,17 @@ const INSTRUCTIONS =
   'the other agents: whenever you are asked about the agents or workers (who is working on what, whose pull request merged, hiring one, sending them home), use them, ' +
   "rather than looking for the agents with git, ps or HTTP calls. list_workers says where each one's pull request stands (merged: true means it merged), hire_worker " +
   'puts a new agent to work, send_home sends agents home and deletes their worktrees and branches, tell_worker gives one a prompt, and link_pr says which pull request is a ' +
-  "worker's when list_workers does not show it. Everyone in the office sees who did what. " +
+  "worker's when list_workers does not show it. push_branch publishes only your assigned branch(es) to origin, and reports Git push errors; then continue with the existing Open PR workflow. Everyone in the office sees who did what. " +
   'The office-workers command on your PATH does the same from a shell.';
 
 /** Runs a tool; resolves to its text, and whether nothing it was asked came off, or throws with why it failed. */
 async function runTool(name, args, io) {
   const a = args && typeof args === 'object' ? args : {};
   if (name === 'list_workers') return { text: JSON.stringify(await call('list', undefined, io), null, 1) };
+  if (name === 'push_branch') {
+    const answer = await call('push', {}, io);
+    return { text: formatPush(answer), isError: (answer.failed ?? []).length > 0 };
+  }
   if (name === 'hire_worker') {
     const answer = await call('hire', a, io);
     const w = answer.worker ?? {};
@@ -516,6 +545,12 @@ export async function main(argv, io = {}) {
       const { cmd: _c, json: asJson, ...ask } = cmd;
       const answer = await call('pr', ask, ctx);
       out(asJson ? JSON.stringify(answer.worker, null, 2) : formatLinked(answer));
+      return 0;
+    }
+    if (cmd.cmd === 'push') {
+      const answer = await call('push', {}, ctx);
+      out(cmd.json ? JSON.stringify(answer, null, 2) : formatPush(answer));
+      if ((answer.failed ?? []).length) return 1;
       return 0;
     }
     const { cmd: _, json, ...body } = cmd;

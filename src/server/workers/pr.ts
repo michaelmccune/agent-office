@@ -9,7 +9,7 @@ import { gh } from '../github.js';
 import type { GhAs } from '../signins.js';
 import { Worktrees } from '../worktrees.js';
 import { run } from './process.js';
-import type { OpenedPr, Worker, WorkerContext } from './types.js';
+import type { OpenedPr, PushResult, Worker, WorkerContext } from './types.js';
 import { truncate } from './util.js';
 import { originRepo } from './worktree.js';
 
@@ -97,6 +97,7 @@ function draftPr(info: WorkerInfo, commits: string[], by: string, other?: { home
 export class WorkerPrs {
   /** owner/name of the floor's project on GitHub, looked up the first time a worker opens a pull request itself. */
   private origin?: { repo: string | undefined };
+  private pushing = new Set<string>();
 
   constructor(private ctx: WorkerContext) {}
 
@@ -139,6 +140,45 @@ export class WorkerPrs {
     return undefined;
   }
 
+  /** Publishes only the current worker's assigned branch(es), without running an agent shell command. */
+  async pushBranch(id: string, as?: GhAs): Promise<PushResult | string> {
+    const w = this.ctx.workers.get(id);
+    if (!w) return 'No such worker';
+    const { info } = w;
+    const wt = info.worktree;
+    if (!wt) return `${info.name} works in the main checkout — only workers with their own worktree can push an assigned branch`;
+    if (info.lost) return `${info.name}'s worktree is gone — rebuild it at its desk before pushing`;
+    if (info.prOpening) return `${info.name}'s pull request is being opened — wait until it is done before pushing`;
+    if (this.pushing.has(id)) return `${info.name}'s branch is already being pushed`;
+
+    this.pushing.add(id);
+    const pushed: PushResult['pushed'] = [];
+    const failed: PushResult['failed'] = [];
+    try {
+      await this.ctx.syncBranch(w);
+      const current = info.worktree ?? wt;
+      const parts = [
+        { repo: path.basename(this.ctx.dir), cwd: path.join(this.ctx.dir, current.path), branch: current.branch },
+        ...(info.repos ?? []).map((repo) => ({ repo: repo.name, cwd: path.join(this.ctx.dir, repo.path), branch: repo.branch })),
+      ];
+      for (const part of parts) {
+        if (!existsSync(part.cwd)) {
+          failed.push({ ...part, error: 'worktree is gone' });
+          continue;
+        }
+        try {
+          await run('git', ['push', '-u', 'origin', part.branch], part.cwd, 90_000, as?.env);
+          pushed.push({ repo: part.repo, branch: part.branch });
+        } catch (err) {
+          failed.push({ ...part, error: (err as Error).message });
+        }
+      }
+      return { pushed, failed };
+    } finally {
+      this.pushing.delete(id);
+    }
+  }
+
   /**
    * Pushes a worktree worker's branch and opens a pull request for it, with a title and body
    * drafted from its task, as `as` (whoever pressed the button) or else the office. Resolves to the
@@ -152,6 +192,7 @@ export class WorkerPrs {
     const { info } = w;
     const wt = info.worktree;
     if (!wt) return `${info.name} works in the main checkout — only workers with their own worktree can open a PR`;
+    if (this.pushing.has(id)) return `${info.name}'s branch is being pushed — wait until it is done before opening a pull request`;
     if (info.prOpening) return `${info.name}'s pull request is already being opened`;
     if (isBusy(info.status)) {
       return `${info.name} is still ${info.status === 'needs_input' ? 'waiting on input' : info.status} — wait until it's done`;

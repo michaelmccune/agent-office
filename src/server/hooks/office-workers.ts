@@ -35,7 +35,8 @@ async function pullOf(floor: Floor, n: number, repo?: string): Promise<{ number:
  * The floor's workers, for any worker on it (see office-workers.ts, and bin/office-workers.js, the
  * command and MCP server that call it): GET lists them, POST hires one, POST /home sends some home
  * (its worktree and branch go too, unless they hold work), POST /tell types a prompt to one, POST /pr
- * says which pull request is one's (for one the office couldn't tell by itself). The
+ * says which pull request is one's (for one the office couldn't tell by itself), and POST /push
+ * publishes the asking worker's assigned branch(es) to their configured origin. The
  * worker's own hook token says who's asking, and the floor hears who did what, as from anyone.
  */
 export async function officeWorkers(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
@@ -65,7 +66,7 @@ export async function officeWorkers(ctx: Ctx, req: http.IncomingMessage, res: ht
       workers: list.map((w) => workerRow(w, view, me.id)),
     });
   }
-  if (req.method !== 'POST' || !['', '/home', '/tell', '/pr'].includes(action)) return send(res, 405, { error: 'GET /office/workers, or POST to /office/workers, /office/workers/home, /office/workers/tell or /office/workers/pr' });
+  if (req.method !== 'POST' || !['', '/home', '/tell', '/pr', '/push'].includes(action)) return send(res, 405, { error: 'GET /office/workers, or POST to /office/workers, /office/workers/home, /office/workers/tell, /office/workers/pr or /office/workers/push' });
   let body: unknown;
   try {
     body = JSON.parse((await readBody(req)) || '{}');
@@ -140,6 +141,16 @@ export async function officeWorkers(ctx: Ctx, req: http.IncomingMessage, res: ht
     const whose = w.id === me.id ? 'its own' : `${w.name}'s`;
     ctx.toastFloor(floor, pr ? `${who} said PR #${pr.number} is ${whose}` : `${who} said ${w.id === me.id ? 'it has' : `${w.name} has`} no pull request`);
     return send(res, 200, { ok: true, worker: row(w.id) });
+  }
+
+  if (action === '/push') {
+    if (me.kind !== 'agent') return send(res, 400, { error: `${who} is a shell, not an agent` });
+    const owner = floor.workers.ownerOf(me.id);
+    const as = owner ? ctx.signins.ghAs(owner) : undefined;
+    if (typeof as === 'string') return send(res, 400, { error: as });
+    const result = await floor.workers.pushBranch(me.id, as);
+    if (typeof result === 'string') return send(res, 400, { error: result });
+    return send(res, 200, result);
   }
 
   const ask = readHireRequest(body, floor.project.agentProviders);

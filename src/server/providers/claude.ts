@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../../shared/actions.js';
-import { MCP_READ_ONLY, writeClaudeMcpConfig } from '../office-workers.js';
+import { MCP_AUTO_APPROVED, writeClaudeMcpConfig } from '../office-workers.js';
 import { QUEUE_AGENT_DISALLOWED_TOOLS } from '../stations.js';
 import { answered, notified, wantsPermission } from '../workers/lifecycle.js';
 import { shq } from '../workers/process.js';
@@ -78,7 +78,7 @@ process.stdin.on('end', () => {
     hooks[event] = [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command }] }];
   }
   // Looking at the office's workers doesn't need anyone's say-so; hiring and sending home still asks.
-  const permissions = { allow: MCP_READ_ONLY };
+  const permissions = { allow: MCP_AUTO_APPROVED };
   writeFileSync(settingsPath, JSON.stringify({ hooks, permissions }, null, 2), { mode: 0o600 });
   return settingsPath;
 }

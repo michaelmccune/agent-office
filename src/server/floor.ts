@@ -207,6 +207,7 @@ export class Floor {
       ctx.prompts,
       ctx.runAs,
       ctx.dshProfile,
+      def.repo,
       ctx.permissions,
     );
     this.workers.wing = () => this.plan.wing;
@@ -269,6 +270,7 @@ export class Floor {
       },
       this.project.branch ? new Worktrees(def.dir) : undefined,
       {
+        repository: def.repo,
         update: (state) => ctx.emit(this, { t: 'meeting', state }),
         toast: (text, level) => ctx.toast(this, text, level),
         hiringPaused: () => ctx.ledger.hiringPaused,
@@ -287,7 +289,7 @@ export class Floor {
       (workerId, repo) => {
         const w = this.workers.get(workerId);
         if (!w) return undefined;
-        if (!repo) return { name: w.name, cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir, rel: w.worktree?.path ?? '', worktreeBase: w.worktree?.base };
+        if (!repo) return { name: w.name, cwd: w.worktree ? path.join(def.dir, w.worktree.path) : def.dir, rel: w.worktree?.path ?? '', repository: def.repo, worktreeBase: w.worktree?.base };
         // One of the other floors' repositories it works in: diffed against, and PRs opened against, that floor's branch.
         const r = w.repos?.find((x) => x.floor === repo);
         if (!r) return undefined;
@@ -296,6 +298,7 @@ export class Floor {
           name: w.name,
           cwd: path.join(def.dir, r.path),
           rel: r.path,
+          repository: other?.def.repo ?? r.repo,
           worktreeBase: r.base,
           baseBranch: r.from ?? null,
           openPull: (branch) => (other ? openPull(other, branch) : undefined),

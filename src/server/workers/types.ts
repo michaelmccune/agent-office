@@ -177,6 +177,8 @@ export interface WorkerHandle<S = unknown> {
 export interface WorkerContext {
   /** The floor's project checkout. */
   readonly dir: string;
+  /** The selected GitHub repository for this floor, when it has one. */
+  readonly repository?: string;
   /** Git plumbing for it. */
   readonly trees: Worktrees;
   readonly workers: Map<string, Worker>;

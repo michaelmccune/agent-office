@@ -4,7 +4,7 @@ import type { AgentChoice, AgentEffort, AgentProvider, TerminalHit, WorkerInfo, 
 import { AGENT_PROVIDERS, takesEffort, takesModel } from '../../shared/providers.js';
 import { Worktrees, workspaceOf, type WorktreeCleanup, type WorktreeState } from '../worktrees.js';
 import { DESK_BY_ID, STATION_AGENT, deskBuilt } from '../../shared/layout.js';
-import { stationBrief } from '../stations.js';
+import { stationBrief, stationRequest } from '../stations.js';
 import { roleForStation, type OfficePermissions } from '../permissions.js';
 import type { PromptSource } from '../prompts.js';
 import type { GhAs } from '../signins.js';
@@ -14,6 +14,7 @@ import { PtyHost, SCROLLBACK, type Adopted, type Pty } from '../ptys.js';
 import { configuredProvider, providerCommand, validateWorkerEffort, validateWorkerModel } from '../agents.js';
 import { ScrollbackStore, searchTerminal, terminalTail } from '../history.js';
 import { DSH_PROFILE_DEFAULT } from '../dsh.js';
+import { floorRepositoryContext, setFloorRepositoryEnv, withFloorRepositoryContext } from '../github-context.js';
 import { DropStore } from '../drops.js';
 import type { Capacity } from '../machine.js';
 import { PROVIDERS, providerAdapter, titleNoise, type LaunchPlan, type ProviderFloor } from '../providers/index.js';
@@ -86,6 +87,7 @@ export class WorkerManager {
     private runAs?: RunAs,
     /** The DSH profile a DeepSeek Harness worker boots (default "acp"). */
     dshProfile: string = DSH_PROFILE_DEFAULT,
+    private repository?: string,
     private permissions?: OfficePermissions,
   ) {
     this.defaultProvider = configuredProvider(agentCmd);
@@ -99,6 +101,7 @@ export class WorkerManager {
     const self = this;
     this.ctx = {
       dir,
+      repository: this.repository,
       trees: this.trees,
       workers: this.workers,
       events,
@@ -294,7 +297,7 @@ export class WorkerManager {
     this.workers.set(id, w);
     if (info.prompt) this.tasks.notePrompt(w, info.prompt);
     // A board agent is told what it's there for ahead of its first request (which is what shows).
-    this.launch(w, seat.station && info.prompt ? `${stationBrief(seat.station, this.prompts)}\n\n${info.prompt}` : info.prompt, undefined);
+    this.launch(w, seat.station && info.prompt ? `${stationBrief(seat.station, this.prompts, this.repository)}\n\n${info.prompt}` : info.prompt, undefined);
     this.persist();
     return info;
   }
@@ -315,7 +318,7 @@ export class WorkerManager {
     w.info.exitCode = undefined;
     const station = DESK_BY_ID.get(w.info.deskId)?.station;
     // A board agent with no session to carry on starts over, so it needs telling what it's for again.
-    const first = prompt && station && !w.info.sessionId ? `${stationBrief(station, this.prompts)}\n\n${prompt}` : prompt;
+    const first = prompt && station && !w.info.sessionId ? `${stationBrief(station, this.prompts, this.repository)}\n\n${prompt}` : prompt;
     if (prompt) {
       w.info.activity = truncate(prompt, 80);
       this.tasks.notePrompt(w, prompt);
@@ -327,11 +330,7 @@ export class WorkerManager {
     return undefined;
   }
 
-  /**
-   * A request for the agent standing by a board (see STATIONS): typed into its session, which is woken
-   * up with it if it's asleep, or it's hired there with it when nobody is. Returns what went wrong, or
-   * the agent and whether it was just hired.
-   */
+  /** Types a request to a board agent, waking or hiring it as needed. */
   station(deskId: string, by: string, text: string, owner?: string): { info: WorkerInfo; hired: boolean } | string {
     if (!DESK_BY_ID.get(deskId)?.station) return 'There is no agent to ask there';
     const clean = text.replace(/\r\n?/g, '\n').trim();
@@ -345,7 +344,8 @@ export class WorkerManager {
     if (w.info.status === 'needs_input') return `The ${w.info.name} is waiting on an answer in its terminal`;
     const running = !!(w.pty || w.dsh);
     if (!running) w.info.lastInput = { by, at: Date.now() };
-    const err = running ? this.prompt(w.info.id, clean, by) : this.resume(w.info.id, clean);
+    const request = running || w.info.sessionId ? stationRequest(DESK_BY_ID.get(deskId)!.station!, this.repository, clean) : clean;
+    const err = running ? this.prompt(w.info.id, request, by) : this.resume(w.info.id, request);
     return err ?? { info: w.info, hired: false };
   }
 
@@ -499,10 +499,11 @@ export class WorkerManager {
   prompt(id: string, text: string, by?: string): string | undefined {
     const w = this.workers.get(id);
     if (!w) return 'No such worker';
+    const clean = text.replace(/\r\n?/g, '\n').trim();
+    if (!clean) return 'Empty prompt';
+    const message = w.info.kind === 'agent' ? withFloorRepositoryContext(clean, floorRepositoryContext(this.repository)) : clean;
     if (w.dsh) {
-      const clean = text.replace(/\r\n?/g, '\n').trim();
-      if (!clean) return 'Empty prompt';
-      w.dsh.prompt(clean);
+      w.dsh.prompt(message);
       w.info.activity = truncate(clean, 80);
       this.tasks.notePrompt(w, clean);
       if (by) w.info.lastInput = { by, at: Date.now() };
@@ -510,10 +511,8 @@ export class WorkerManager {
       return undefined;
     }
     if (!w.pty) return 'Worker is not running';
-    const clean = text.replace(/\r\n?/g, '\n').trim();
-    if (!clean) return 'Empty prompt';
     // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
-    w.pty.write(`\x1b[200~${clean}\x1b[201~`);
+    w.pty.write(`\x1b[200~${message}\x1b[201~`);
     setTimeout(() => w.pty?.write('\r'), 120);
     w.info.activity = truncate(clean, 80);
     this.tasks.notePrompt(w, clean);
@@ -634,6 +633,7 @@ export class WorkerManager {
 
   private launch(w: Worker, prompt: string | undefined, resumeSessionId: string | undefined) {
     const { info } = w;
+    if (info.kind === 'agent' && prompt !== undefined) prompt = withFloorRepositoryContext(prompt, floorRepositoryContext(this.repository));
     // Its folder was deleted meanwhile: it waits, marked lost, for someone to rebuild it or send it home.
     if (this.worktrees.checkLost(w)) {
       clockWork(info, 'exited');
@@ -667,7 +667,7 @@ export class WorkerManager {
     const plan: LaunchPlan = adapter ? adapter.launch({ h: this.handleOf(w), args: base, prompt, resumeSessionId, station, cwd, setup: this.setups[adapter.id], ...(choices ? { permissions: { role, choices } } : {}) }) : { args: base };
     const { args } = plan;
     if (plan.rotateToken) w.hookToken = randomBytes(16).toString('hex');
-    const env = childEnv();
+    const env = setFloorRepositoryEnv(childEnv(), this.repository);
     Object.assign(env, {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',

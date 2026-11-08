@@ -8,10 +8,10 @@ import { isBusy } from '../../shared/status.js';
 import { gh } from '../github.js';
 import type { GhAs } from '../signins.js';
 import { Worktrees } from '../worktrees.js';
+import { floorGhEnv, floorRepository } from '../github-context.js';
 import { run } from './process.js';
 import type { OpenedPr, PushResult, Worker, WorkerContext } from './types.js';
 import { truncate } from './util.js';
-import { originRepo } from './worktree.js';
 
 const PR_TITLE_MAX = 72;
 const PR_TASK_MAX = 2500;
@@ -35,15 +35,17 @@ export function ownPr(command: unknown, output: string): { repo: string; number:
   return last && { repo: last[1], number: Number(last[2]), url: last[0] };
 }
 
-async function findOpenPr(branch: string, cwd: string): Promise<{ number: number; url: string } | undefined> {
-  const out = await gh(['pr', 'list', '--head', branch, '--state', 'open', '--limit', '1', '--json', 'number,url'], cwd);
+async function findOpenPr(branch: string, cwd: string, repo?: string): Promise<{ number: number; url: string } | undefined> {
+  const target = floorRepository(repo);
+  const out = await gh(['pr', 'list', '--head', branch, '--state', 'open', '--limit', '1', '--json', 'number,url', ...(target ? ['--repo', target] : [])], cwd, undefined, floorGhEnv(target));
   const found = (JSON.parse(out || '[]') as { number: number; url: string }[])[0];
   return found ? { number: found.number, url: found.url } : undefined;
 }
 
 /** `gh pr create` for a pushed branch; resolves to the new pull request. */
-async function createPr(branch: string, base: string | undefined, title: string, body: string, cwd: string, as?: GhAs): Promise<{ number: number; url: string }> {
-  const out = await gh(['pr', 'create', '--head', branch, ...(base ? ['--base', base] : []), '--title', title, '--body', body], cwd, 60_000, as?.env);
+async function createPr(branch: string, base: string | undefined, title: string, body: string, cwd: string, repo: string | undefined, as?: GhAs): Promise<{ number: number; url: string }> {
+  const target = floorRepository(repo);
+  const out = await gh(['pr', 'create', ...(target ? ['--repo', target] : []), '--head', branch, ...(base ? ['--base', base] : []), '--title', title, '--body', body], cwd, 60_000, floorGhEnv(target, as?.env));
   const url = out.trim().split('\n').pop() ?? '';
   const number = Number(/\/pull\/(\d+)/.exec(url)?.[1]);
   if (!number) throw new Error(`gh did not return a pull request URL (${truncate(out, 120)})`);
@@ -95,8 +97,6 @@ function draftPr(info: WorkerInfo, commits: string[], by: string, other?: { home
 
 /** Opening pull requests for one floor's workers (see WorkerContext). */
 export class WorkerPrs {
-  /** owner/name of the floor's project on GitHub, looked up the first time a worker opens a pull request itself. */
-  private origin?: { repo: string | undefined };
   private pushing = new Set<string>();
 
   constructor(private ctx: WorkerContext) {}
@@ -112,9 +112,8 @@ export class WorkerPrs {
     if (!pr) return;
     const { info } = w;
     const same = (repo?: string) => repo?.toLowerCase() === pr.repo.toLowerCase();
-    this.origin ??= { repo: originRepo(this.ctx.dir) };
-    const other = same(this.origin.repo) ? undefined : info.repos?.find((r) => same(r.repo));
-    if (!same(this.origin.repo) && !other) return;
+    const other = same(this.ctx.repository) ? undefined : info.repos?.find((r) => same(r.repo));
+    if (!same(this.ctx.repository) && !other) return;
     if ((other ?? info).pr?.number === pr.number) return;
     // The one it had may still be open (a second task, a follow-up): it stays its own too.
     if (!other && info.pr) info.pastPrs = [...new Set([...(info.pastPrs ?? []), info.pr.number])].filter((n) => n !== pr.number).slice(-MAX_PAST_PRS);
@@ -209,7 +208,7 @@ export class WorkerPrs {
       const commits = (await run('git', ['log', '--reverse', '--format=%h %s', `${wt.base}..${branch}`], cwd)).split('\n').filter(Boolean);
       const dirty = (await run('git', ['status', '--porcelain'], cwd)) !== '';
       if (!commits.length) return dirty ? `${info.name} hasn't committed anything yet — ask it to commit first` : `${info.name} has no commits on ${branch} yet`;
-      const open = await findOpenPr(branch, cwd);
+      const open = await findOpenPr(branch, cwd, this.ctx.repository);
       if (open) {
         info.pr = open;
         this.ctx.persist();
@@ -218,7 +217,7 @@ export class WorkerPrs {
       await run('git', ['push', '-u', 'origin', branch], cwd, 90_000, as?.env);
       const base = await this.pushedBranch([wt.from, this.ctx.trees.currentBranch()], branch);
       const { title, body } = draftPr(info, commits, by);
-      const { number, url } = await createPr(branch, base, title, body, cwd, as);
+      const { number, url } = await createPr(branch, base, title, body, cwd, this.ctx.repository, as);
       info.pr = { number, url };
       this.ctx.persist();
       return { prs: [{ number, url, existed: false, dirty }], failed: [] };
@@ -240,16 +239,16 @@ export class WorkerPrs {
   private async openPrs(w: Worker, by: string, as?: GhAs): Promise<{ prs: OpenedPr[]; failed: string[] } | string> {
     const { info } = w;
     const wt = info.worktree!;
-    const home = originRepo(this.ctx.dir);
+    const home = this.ctx.repository;
     const parts = [
-      { name: path.basename(wt.path), dir: this.ctx.dir, ...wt, pr: info.pr, own: true, set: (pr: { number: number; url: string }) => (info.pr = pr) },
-      ...info.repos!.map((r) => ({ ...r, own: false, set: (pr: { number: number; url: string }) => (r.pr = pr) })),
+      { name: path.basename(wt.path), dir: this.ctx.dir, repository: this.ctx.repository, ...wt, pr: info.pr, own: true, set: (pr: { number: number; url: string }) => (info.pr = pr) },
+      ...info.repos!.map((r) => ({ ...r, repository: r.repo, own: false, set: (pr: { number: number; url: string }) => (r.pr = pr) })),
     ];
     const gone = parts.filter((p) => !existsSync(path.join(this.ctx.dir, p.path)));
     if (gone.length) return `${info.name}'s worktree${gone.length > 1 ? 's' : ''} of ${gone.map((p) => p.name).join(', ')} ${gone.length > 1 ? 'are' : 'is'} gone`;
     info.prOpening = true;
     this.ctx.emit(w);
-    const prs: (OpenedPr & { cwd: string })[] = [];
+    const prs: (OpenedPr & { cwd: string; target?: string })[] = [];
     const failed: string[] = [];
     const uncommitted: string[] = [];
     try {
@@ -257,10 +256,10 @@ export class WorkerPrs {
         const cwd = path.join(this.ctx.dir, p.path);
         try {
           const dirty = (await run('git', ['status', '--porcelain'], cwd)) !== '';
-          const known = p.pr ?? (await findOpenPr(p.branch, cwd));
+          const known = p.pr ?? (await findOpenPr(p.branch, cwd, p.repository));
           if (known) {
             p.set(known);
-            prs.push({ repo: p.name, ...known, existed: true, dirty, cwd });
+            prs.push({ repo: p.name, ...known, existed: true, dirty, cwd, target: p.repository });
             continue;
           }
           const commits = (await run('git', ['log', '--reverse', '--format=%h %s', `${p.base}..${p.branch}`], cwd)).split('\n').filter(Boolean);
@@ -271,10 +270,10 @@ export class WorkerPrs {
           await run('git', ['push', '-u', 'origin', p.branch], cwd, 90_000, as?.env);
           const base = await this.pushedBranch([p.from, new Worktrees(p.dir).currentBranch()], p.branch, p.dir);
           const { title, body } = draftPr(info, commits, by, p.own ? undefined : { home });
-          const pr = await createPr(p.branch, base, title, body, cwd, as);
+          const pr = await createPr(p.branch, base, title, body, cwd, p.repository, as);
           p.set(pr);
           this.ctx.persist();
-          prs.push({ repo: p.name, ...pr, existed: false, dirty, cwd });
+          prs.push({ repo: p.name, ...pr, existed: false, dirty, cwd, target: p.repository });
         } catch (err) {
           failed.push(`Couldn't open a PR in ${p.name}: ${(err as Error).message}`);
         }
@@ -286,16 +285,18 @@ export class WorkerPrs {
       if (prs.length > 1 && prs.some((p) => !p.existed)) {
         for (const p of prs) {
           try {
-            const body = await gh(['pr', 'view', p.url, '--json', 'body', '--jq', '.body'], p.cwd, 30_000, as?.env);
+            const target = floorRepository(p.target);
+            const scope = target ? ['--repo', target] : [];
+            const body = await gh(['pr', 'view', p.url, ...scope, '--json', 'body', '--jq', '.body'], p.cwd, 30_000, floorGhEnv(target, as?.env));
             const next = withRelated(body, relatedBlock(prs, p.url, wt.branch));
-            if (next !== body) await gh(['pr', 'edit', p.url, '--body', next], p.cwd, 60_000, as?.env);
+            if (next !== body) await gh(['pr', 'edit', p.url, ...scope, '--body', next], p.cwd, 60_000, floorGhEnv(target, as?.env));
           } catch (err) {
             failed.push(`Couldn't list the other pull requests on ${p.repo} #${p.number}: ${(err as Error).message}`);
           }
         }
       }
       this.ctx.persist();
-      return { prs: prs.map(({ cwd: _, ...p }) => p), failed };
+      return { prs: prs.map(({ cwd: _, target: __, ...p }) => p), failed };
     } finally {
       info.prOpening = false;
       if (this.ctx.workers.get(info.id) === w) this.ctx.emit(w);

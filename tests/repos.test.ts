@@ -56,7 +56,7 @@ const file = process.env.GH_STATE;
 const st = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { prs: [] };
 const a = process.argv.slice(2);
 const opt = (n) => { const i = a.indexOf(n); return i >= 0 ? a[i + 1] : undefined; };
-const repo = () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim().replace(/^https:\\/\\/github\\.com\\//, '').replace(/\\.git$/, '');
+const repo = () => opt('--repo') || process.env.GH_REPO || execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim().replace(/^https:\\/\\/github\\.com\\//, '').replace(/\\.git$/, '');
 const done = (out, code = 0) => { fs.writeFileSync(file, JSON.stringify(st)); process.stdout.write(out); process.exit(code); };
 if (a[0] === 'pr' && a[1] === 'list') done(JSON.stringify(st.prs.filter((p) => p.repo === repo() && p.head === opt('--head') && p.state === 'OPEN').slice(0, 1).map((p) => ({ number: p.number, url: p.url }))));
 if (a[0] === 'pr' && a[1] === 'create') {
@@ -125,7 +125,7 @@ const events: WorkerEvents = { update() {}, remove() {}, data() {}, screen() {},
 function manager(f: Fixture, t: { after(fn: () => void): void }): WorkerManager {
   const data = path.join(f.a, '.agent-office');
   mkdirSync(data, { recursive: true });
-  const workers = new WorkerManager(f.a, data, f.agent, [], { url: 'http://127.0.0.1:1', token: '' }, events, new Ledger(data, { pauseHiring: false }, () => {}, () => {}));
+  const workers = new WorkerManager(f.a, data, f.agent, [], { url: 'http://127.0.0.1:1', token: '' }, events, new Ledger(data, { pauseHiring: false }, () => {}, () => {}), undefined, undefined, undefined, undefined, 'acme/web');
   t.after(() => workers.shutdown());
   return workers;
 }

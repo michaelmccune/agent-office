@@ -10,7 +10,7 @@ import type { AgentChoice, MeetingRequest, WorkerInfo } from '../src/shared/prot
 import { MEETING_PATTERNS, MEETING_PATTERN_IDS, fixedRounds, isMeetingPattern } from '../src/shared/meetings.js';
 import { PROMPTS, type PromptId } from '../src/shared/prompts.js';
 
-function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, string>>; officeDefault?: AgentChoice } = {}) {
+function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, string>>; officeDefault?: AgentChoice; repository?: string } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-meeting-'));
   const dataDir = path.join(dir, '.agent-office');
   mkdirSync(dataDir, { recursive: true });
@@ -60,6 +60,7 @@ function fixture(opts: { git?: boolean; rewritten?: Partial<Record<PromptId, str
     },
   };
   const room: MeetingRoom = new MeetingRoom(dir, dataDir, manager, opts.git ? new Worktrees(dir) : undefined, {
+    repository: opts.repository,
     update() {},
     toast: (text) => toasts.push(text),
     hiringPaused: () => undefined,
@@ -200,13 +201,16 @@ test('red / blue ends early when red finds nothing more', (t) => {
 });
 
 test('a review panel posts the combined review on the pull request', async (t) => {
-  const f = fixture(); t.after(() => f.close());
+  const f = fixture({ repository: 'michaelmccune/agent-office' }); t.after(() => f.close());
   assert.match(f.start({ pattern: 'review', prompt: 'Review it' }) ?? '', /needs a pull request/);
   assert.equal(f.start({ pattern: 'review', prompt: 'Review it', pr: 42 }), undefined);
   let m = f.room.state().current!;
   assert.equal(m.output, 'reviews/pr-42.md');
   assert.equal(m.title, 'Review of PR #42');
+  assert.match(f.prompts[0].text, /The pull request is #42 in michaelmccune\/agent-office/);
+  assert.match(f.prompts[0].text, /gh pr view 42 --repo michaelmccune\/agent-office/);
   assert.match(f.prompts[1].text, /through your lens, Security/);
+  assert.match(f.prompts[1].text, /gh pr diff 42 --repo michaelmccune\/agent-office/);
   for (const i of [0, 1, 2]) f.take(i, '- a.ts:1 — something');
   assert.match(f.prompts.at(-1)!.text, /\*\*\[Security\]\*\*/);
   f.take(0, 'Looks fine. **[Security]** a.ts:1 — something');
@@ -215,6 +219,13 @@ test('a review panel posts the combined review on the pull request', async (t) =
   assert.equal(m.status, 'done');
   assert.deepEqual(f.reviews, [{ pr: 42, file: path.join(f.dir, 'reviews/pr-42.md') }]);
   assert.equal(m.review?.url, 'https://github.com/o/r/pull/42#pullrequestreview-1');
+});
+
+test('an issue meeting identifies the active floor repository in its brief', (t) => {
+  const f = fixture({ repository: 'michaelmccune/agent-office' }); t.after(() => f.close());
+  assert.equal(f.start({ issue: 2, prompt: 'Discuss fork issue #2' }), undefined);
+  assert.match(f.prompts[0].text, /GitHub issue #2 in michaelmccune\/agent-office/);
+  assert.match(f.prompts[0].text, /gh issue view 2 --comments --repo michaelmccune\/agent-office/);
 });
 
 test('map-reduce hands each mapper its own parts', (t) => {

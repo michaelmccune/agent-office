@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Changes, insideCheckout, type ChangesTarget } from '../src/server/changes.js';
@@ -90,4 +90,52 @@ test('a renamed picture shows its old name before and its new name after', async
   assert.ok(!('error' in old) && !('error' in now));
   assert.equal(old.body.toString('utf8'), 'old picture');
   assert.equal(now.body.toString('utf8'), 'old picture');
+});
+
+test('opening a PR from Changes pins gh to that checkout repository', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'office-changes-pr-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'repo');
+  const remote = path.join(root, 'origin.git');
+  mkdirSync(dir);
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+  git('init', '-q', '-b', 'main');
+  writeFileSync(path.join(dir, 'README.md'), '# demo\n');
+  git('add', '.');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init');
+  git('remote', 'add', 'origin', remote);
+  git('push', '-q', '-u', 'origin', 'main');
+  git('checkout', '-q', '-b', 'fix');
+  writeFileSync(path.join(dir, 'README.md'), '# fixed\n');
+  git('commit', '-qam', 'fix');
+
+  const bin = path.join(root, 'bin');
+  mkdirSync(bin);
+  const capture = path.join(root, 'gh-call.json');
+  const fakeGh = path.join(bin, 'gh');
+  writeFileSync(fakeGh, `#!/usr/bin/env node\nconst fs = require('node:fs');\nfs.writeFileSync(${JSON.stringify(capture)}, JSON.stringify({args: process.argv.slice(2), repo: process.env.GH_REPO}));\nprocess.stdout.write('https://github.com/michaelmccune/agent-office/pull/2\\n');\n`, { mode: 0o700 });
+  chmodSync(fakeGh, 0o700);
+  const oldPath = process.env.PATH;
+  const oldRepo = process.env.GH_REPO;
+  process.env.PATH = `${bin}${path.delimiter}${oldPath ?? ''}`;
+  process.env.GH_REPO = 'AgentSystemLabs/agent-office';
+  t.after(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    if (oldRepo === undefined) delete process.env.GH_REPO;
+    else process.env.GH_REPO = oldRepo;
+  });
+
+  const target: ChangesTarget = { name: 'Worker 1', cwd: dir, rel: '', repository: 'michaelmccune/agent-office' };
+  const changes = new Changes(dir, 'main', (id) => (id === 'w1' ? target : undefined), () => undefined, {
+    state() {},
+    toast() {},
+    refreshGitHub() {},
+  });
+  t.after(() => changes.stop());
+  assert.equal(await changes.pullRequest('w1', 'Fix', 'Closes #2', 'Ada'), undefined);
+  const call = JSON.parse(readFileSync(capture, 'utf8')) as { args: string[]; repo: string };
+  assert.equal(call.repo, 'michaelmccune/agent-office');
+  assert.deepEqual(call.args.slice(0, 4), ['pr', 'create', '--repo', 'michaelmccune/agent-office']);
 });

@@ -45,6 +45,23 @@ test('the issues and PR agents keep their jobs, and may still be asked for somet
   }
 });
 
+test('the PR agent is pinned to the active fork and checks reviewer eligibility there', () => {
+  const brief = stationBrief('pulls', undefined, 'michaelmccune/agent-office');
+  assert.match(brief, /active floor's selected GitHub repository is `michaelmccune\/agent-office`/);
+  assert.match(brief, /gh pr list --repo michaelmccune\/agent-office --state open/);
+  assert.match(brief, /gh pr view <number> --repo michaelmccune\/agent-office --json reviewRequests/);
+  assert.match(brief, /gh api repos\/michaelmccune\/agent-office\/collaborators\/\<login\>\/permission/);
+  assert.match(brief, /If none are eligible, explain that and do not attempt the request or act on another repository/);
+  assert.doesNotMatch(brief, /AgentSystemLabs\/agent-office/);
+  assert.ok(brief.endsWith('The request:'));
+});
+
+test('the PR agent asks before acting when its floor repository is unavailable', () => {
+  const brief = stationBrief('pulls');
+  assert.match(brief, /repository identity is unavailable/);
+  assert.match(brief, /ask the person to clarify/);
+});
+
 test('the queue agent is launched without the file-editing tools', () => {
   assert.deepEqual(QUEUE_AGENT_DISALLOWED_TOOLS, ['Edit', 'Write', 'NotebookEdit']);
 });

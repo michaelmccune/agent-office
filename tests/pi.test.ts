@@ -7,6 +7,7 @@ import { normalizePiHook, piArgs, PI_EXTENSION_SOURCE, writePiExtension } from '
 import { isValidPiModel } from '../src/shared/providers.js';
 import { WorkerManager, type WorkerEvents } from '../src/server/workers.js';
 import { Ledger } from '../src/server/usage.js';
+import { floorRepositoryContext, withFloorRepositoryContext } from '../src/server/github-context.js';
 import type { Pty, PtyExit, SpawnOpts } from '../src/server/ptys.js';
 
 test('Pi launch uses interactive mode, an isolated session, and safe prompt arguments', () => {
@@ -109,7 +110,7 @@ test('Pi worker launches, authenticates hooks, resumes its own session, and rest
   const first = launches[0].opts;
   assert.equal(first.file, file);
   assert.ok(first.args.includes(path.join(data, 'pi-sessions', worker.id)));
-  assert.deepEqual(first.args.slice(-6), ['--model', 'openai/gpt-4.1', '--thinking', 'high', '--', '- fix login']);
+  assert.deepEqual(first.args.slice(-6), ['--model', 'openai/gpt-4.1', '--thinking', 'high', '--', withFloorRepositoryContext('- fix login', floorRepositoryContext())]);
   assert.match(readFileSync(writePiExtension(data), 'utf8'), /agent_settled/);
   const token = first.env.AGENT_OFFICE_HOOK_TOKEN;
   const piHook = (id: string, key: string, payload: unknown) => workers.handleProviderHook('pi', id, key, '', payload);

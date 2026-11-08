@@ -125,7 +125,7 @@ export class WorkerTrees {
    * workspace like `others`. Throws when it can't be written.
    */
   private writeBrief(primary: { path: string; branch: string; from?: string }, others: { name: string; project: string; from?: string }[]) {
-    const home = originRepo(this.ctx.dir) ?? path.basename(this.ctx.dir);
+    const home = this.ctx.repository ?? 'not available';
     const line = (name: string, project: string, from?: string, note = '') => `- \`${name}/\`: ${project}${from ? `, cut from ${from}` : ''}${note}`;
     const brief = officePrompt(this.ctx.prompts, 'worker.repos', {
       branch: primary.branch,

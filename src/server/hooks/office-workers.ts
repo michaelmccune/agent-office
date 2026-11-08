@@ -2,6 +2,7 @@ import type http from 'node:http';
 import { notLeaving } from '../leave-on-merge.js';
 import { findWorker, readHireRequest, readHomeRequest, readPrRequest, workerRow, type PullsView } from '../office-workers.js';
 import { gh } from '../github.js';
+import { floorGhEnv } from '../github-context.js';
 import type { Floor } from '../floor.js';
 import { nextFreeSeat } from '../../shared/layout.js';
 import type { WorkerInfo } from '../../shared/protocol.js';
@@ -19,8 +20,9 @@ async function pullOf(floor: Floor, n: number, repo?: string): Promise<{ number:
   const listed = floor.github.pulls.items.find((p) => p.number === n);
   let pr: { url: string; state: string } | undefined = listed;
   if (!pr) {
+    if (!here) return "This floor's GitHub repository identity is unavailable";
     try {
-      pr = JSON.parse(await gh(['pr', 'view', String(n), '--json', 'url,state'], floor.dir)) as { url: string; state: string };
+      pr = JSON.parse(await gh(['pr', 'view', String(n), '--json', 'url,state', '--repo', here], floor.dir, undefined, floorGhEnv(here))) as { url: string; state: string };
     } catch (err) {
       return `No pull request #${n} here: ${(err as Error).message}`;
     }

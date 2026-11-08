@@ -250,6 +250,39 @@ test('fork boards exclude upstream-only items and keep details and actions on th
   assert.ok(calls.some(({ args, env }) => args[0] === 'api' && args.some((arg) => arg.endsWith('/issues/12/comments')) && env?.GITHUB_TOKEN === 'user-token'), 'repository scoping preserves the account sign-in');
 });
 
+test('a fork PR and upstream PR with the same number read and mutate only the selected fork', async (t) => {
+  const dir = forkCheckout(t);
+  const calls: GhCall[] = [];
+  const runner = async (args: string[], cwd: string, _timeout?: number, env?: Record<string, string>): Promise<string> => {
+    const repo = selectedGhRepo(args, cwd, env);
+    calls.push({ args, repo, env });
+    if (args[0] === 'repo' && args[1] === 'view') return JSON.stringify({ nameWithOwner: repo, squashMergeAllowed: true, mergeCommitAllowed: true, rebaseMergeAllowed: true });
+    if (args[0] === 'issue' && args[1] === 'list') return '[]';
+    if (args[0] === 'pr' && args[1] === 'list') {
+      return args[args.indexOf('--state') + 1] === 'open'
+        ? JSON.stringify([{ number: 2, title: `PR #2 from ${repo}`, state: 'OPEN', url: `https://github.com/${repo}/pull/2` }])
+        : '[]';
+    }
+    if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ number: 2, body: `Details from ${repo}`, state: 'OPEN', comments: [], reviews: [], commits: [], statusCheckRollup: [] });
+    if (args[0] === 'pr' && args[1] === 'diff') return `diff from ${repo}`;
+    if (args[0] === 'pr' && args[1] === 'close') return '';
+    if (args[0] === 'api') return '';
+    throw new Error(`Unexpected fake gh command: ${args.join(' ')}`);
+  };
+  let pulls: GhState<GhPull> | undefined;
+  const github = new GitHub(dir, 'michaelmccune/agent-office', () => {}, (state) => (pulls = state), runner);
+
+  await github.refresh();
+  assert.equal(pulls?.items[0].number, 2);
+  assert.equal(pulls?.items[0].title, 'PR #2 from michaelmccune/agent-office');
+  assert.match((await github.pullDetail(2)).body, /Details from michaelmccune\/agent-office/);
+  assert.match(await github.pullDiff(2), /diff from michaelmccune\/agent-office/);
+  assert.equal(await github.close('pull', 2, {}), undefined);
+  assert.ok(calls.some(({ repo }) => repo === 'michaelmccune/agent-office'));
+  const scopedCalls = calls.filter(({ args }) => args[0] === 'pr' || (args[0] === 'api' && args.some((arg) => arg.startsWith('repos/'))));
+  assert.ok(scopedCalls.every(({ repo }) => repo === 'michaelmccune/agent-office'), 'no PR or repository API read/write reaches upstream PR #2');
+});
+
 test("each floor's boards stay scoped to its own fork", async (t) => {
   const firstDir = forkCheckout(t, 'alice/agent-office', 'AgentSystemLabs/agent-office');
   const secondDir = forkCheckout(t, 'bob/agent-office', 'AgentSystemLabs/agent-office');

@@ -3,7 +3,7 @@
  * and letting it fly, baskets and streaks, and the ball in everyone's hands.
  */
 import * as THREE from 'three';
-import { HOOP, SWEET, idealSpeed, lookAtRim, meter, shotSpeed, throwPitch, tossSpeed, underCeiling } from '../../../shared/hoop';
+import { HOOP, SWEET, idealSpeed, lookAtRim, meter, scoringShot, shotSpeed, throwPitch, tossSpeed, underCeiling } from '../../../shared/hoop';
 import type { Ctx, Hint } from '../../core/context';
 import { aside, hintTitle, key, onE } from '../../core/hint';
 import { store } from '../../state';
@@ -96,7 +96,7 @@ export function installBasketball(ctx: Ctx, deps: BasketballDeps) {
     const toRim = Math.atan2(rim.x - from.x, rim.z - from.z);
     const off = Math.abs(Math.atan2(Math.sin(toRim - facing), Math.cos(toRim - facing)));
     const far = Math.hypot(rim.x - from.x, rim.z - from.z);
-    const atHoop = off < (first ? 0.35 : 0.6) && far < 16 && far > 0.4;
+    const atHoop = off < (first ? 0.35 : 0.6) && far > 0.4;
     if (first) {
       const look = throwPitch(player.lookPitch);
       const pitch = atHoop ? underCeiling(from, look) : look;
@@ -122,6 +122,11 @@ export function installBasketball(ctx: Ctx, deps: BasketballDeps) {
     if (!holdingBall()) return;
     const a = shotAim();
     shooting = a.ideal !== null;
+    const tuned = shooting ? scoringShot(a.from, a.pitch) : null;
+    if (tuned) {
+      a.pitch = tuned.pitch;
+      a.ideal = tuned.speed;
+    }
     release(a.from, a.heading, a.pitch, shooting ? shotSpeed(a.ideal!, power) : tossSpeed(power));
     if (ctx.player.view === 'first') ctx.hands.shoot();
     else ctx.me.shoot();

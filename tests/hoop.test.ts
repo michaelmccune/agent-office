@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BALL, HOOP, SWEET, backboard, idealSpeed, launch, lookAtRim, meter, outOfReach, shotSpeed, simulate, throwOk, throwPitch, underCeiling, type BallHit, type Solid } from '../src/shared/hoop.js';
+import { BALL, HOOP, SWEET, backboard, idealSpeed, launch, lookAtRim, meter, outOfReach, scoringShot, shotSpeed, simulate, throwOk, throwPitch, underCeiling, type BallHit, type Solid } from '../src/shared/hoop.js';
 import { FLOOR, LOFT, WALL_HEIGHT } from '../src/shared/layout.js';
 import { Court } from '../src/server/court.js';
 
@@ -12,24 +12,53 @@ const room: Solid[] = [
   backboard(),
 ];
 
-/** A shot from `dist` meters straight out from the rim, let go of at `power` on the meter. */
-function shoot(dist: number, power: number, hits?: BallHit[]) {
-  const from = { x: HOOP.rim.x + dist, y: 1.4, z: HOOP.z };
-  const pitch = underCeiling(from, throwPitch(lookAtRim(from)));
-  const v = shotSpeed(idealSpeed(from, pitch)!, power);
-  const s = launch({ ...from, vx: -v * Math.cos(pitch), vy: v * Math.sin(pitch), vz: 0 });
-  simulate(s, 30, room, hits);
+/** A shot from `from`, let go of at `power` on the meter, optionally into extra obstacles. */
+function shootFrom(from: { x: number; y: number; z: number }, power: number, hits?: BallHit[], obstacles: Solid[] = []) {
+  const preferred = underCeiling(from, throwPitch(lookAtRim(from)));
+  const aim = scoringShot(from, preferred);
+  assert.ok(aim, `find a scoreable arc from ${JSON.stringify(from)}`);
+  const v = shotSpeed(aim.speed, power);
+  const dx = HOOP.rim.x - from.x;
+  const dz = HOOP.rim.z - from.z;
+  const d = Math.hypot(dx, dz);
+  const s = launch({ ...from, vx: (dx / d) * v * Math.cos(aim.pitch), vy: v * Math.sin(aim.pitch), vz: (dz / d) * v * Math.cos(aim.pitch) });
+  simulate(s, 30, [...room, ...obstacles], hits);
   return s;
 }
 
-test('a shot let go of right in the sweet spot drops through the ring, from close up to way out', () => {
-  for (const dist of [2, 4.2, 6, 9, 12, 15]) {
+/** A shot from `dist` meters straight out from the rim. */
+function shoot(dist: number, power: number, hits?: BallHit[]) {
+  return shootFrom({ x: HOOP.rim.x + dist, y: 1.4, z: HOOP.z }, power, hits);
+}
+
+test('a correctly timed shot scores from close, long and full-floor distances', () => {
+  for (const dist of [2, 4.2, 6, 9, 12, 15, 20, 25, 35]) {
     const hits: BallHit[] = [];
     const s = shoot(dist, SWEET.at, hits);
     assert.ok(s.scored, `from ${dist} m`);
-    assert.ok(!s.touched.rim && !s.touched.board, `nothing but net from ${dist} m`);
+    assert.ok(!s.touched.board, `clear of the board from ${dist} m`);
+    if (dist <= 20) assert.ok(!s.touched.rim, `nothing but net from ${dist} m`);
     assert.equal(hits.filter((h) => h.kind === 'score').length, 1, 'it goes in once');
   }
+});
+
+test('full-flight diagonal shots from opposite corners stay under the ceiling and score', () => {
+  for (const y of [1.4, 1.95]) {
+    const from = { x: 17, y, z: -12 };
+    const preferred = underCeiling(from, throwPitch(lookAtRim(from)));
+    const speed = idealSpeed(from, preferred);
+    assert.ok(speed !== null);
+    assert.ok(from.y + (speed * Math.sin(preferred)) ** 2 / 19.6 <= WALL_HEIGHT - BALL.r, `apex from y=${y}`);
+    assert.ok(shootFrom(from, SWEET.at).scored, `diagonal shot from y=${y}`);
+  }
+});
+
+test('an obstacle in the selected shot path still blocks the basket', () => {
+  const blocker: Solid = { minX: -0.5, maxX: 0.5, minZ: FLOOR.minZ, maxZ: FLOOR.maxZ, bottom: 0, top: 99 };
+  const hits: BallHit[] = [];
+  const s = shootFrom({ x: HOOP.rim.x + 25, y: 1.4, z: HOOP.z }, SWEET.at, hits, [blocker]);
+  assert.ok(!s.scored);
+  assert.ok(hits.some((hit) => hit.kind === 'bounce'), 'the wall collision still happens');
 });
 
 test('well short of the sweet spot, or at the top of the meter, misses (close in, a long one can still bank in)', () => {

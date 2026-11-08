@@ -29,8 +29,8 @@ interface ClaudeSetup {
 }
 
 /** Claude Code's --settings for every worker: each hook event posted to the office, with curl or else the office's own node. */
-function writeHookSettings(dataDir: string): string {
-  const settingsPath = path.join(dataDir, 'claude-hooks.json');
+function writeHookSettings(dataDir: string, allowed: string[] = MCP_AUTO_APPROVED, key = 'default'): string {
+  const settingsPath = path.join(dataDir, key === 'default' ? 'claude-hooks.json' : `claude-hooks-${key}.json`);
   const events: [string, string | undefined][] = [
     ['SessionStart', undefined],
     ['UserPromptSubmit', undefined],
@@ -78,7 +78,7 @@ process.stdin.on('end', () => {
     hooks[event] = [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command }] }];
   }
   // Looking at the office's workers doesn't need anyone's say-so; hiring and sending home still asks.
-  const permissions = { allow: MCP_AUTO_APPROVED };
+  const permissions = { allow: allowed };
   writeFileSync(settingsPath, JSON.stringify({ hooks, permissions }, null, 2), { mode: 0o600 });
   return settingsPath;
 }
@@ -198,8 +198,17 @@ export const claude: ProviderAdapter<undefined, ClaudeSetup> = {
     settings: writeHookSettings(dataDir),
     mcp: mcpScript ? writeClaudeMcpConfig(dataDir, mcpScript) : undefined,
   }),
-  launch({ h: { info }, args, prompt, resumeSessionId, station, setup }) {
-    args.unshift('--settings', setup.settings);
+  launch({ h: { info }, args, prompt, resumeSessionId, station, setup, permissions: agentPermissions }) {
+    const allowed = agentPermissions
+      ? [
+          ...(agentPermissions.choices.officeState ? ['mcp__agent-office__list_workers'] : []),
+          ...(agentPermissions.choices.agentDiscussion ? ['mcp__agent-office__tell_worker'] : []),
+          ...(agentPermissions.choices.pushBranch ? ['mcp__agent-office__push_branch'] : []),
+        ]
+      : MCP_AUTO_APPROVED;
+    const key = agentPermissions ? `${agentPermissions.role}-${Number(agentPermissions.choices.officeState)}${Number(agentPermissions.choices.agentDiscussion)}${Number(agentPermissions.choices.pushBranch)}` : 'default';
+    const roleSettings = writeHookSettings(path.dirname(setup.settings), allowed, key);
+    args.unshift('--settings', roleSettings);
     // The office's MCP server: its workers, to list, hire, send home and tell (see office-workers.ts).
     // Ahead of --settings, which ends the list --mcp-config takes.
     if (setup.mcp) args.unshift('--mcp-config', setup.mcp);

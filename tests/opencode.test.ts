@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   mergeOpenCodeConfigContent,
+  openCodePermissionRules,
   writeOpenCodePlugin,
 } from '../src/server/opencode.js';
 import { opencode } from '../src/server/providers/opencode.js';
@@ -21,6 +22,14 @@ test('does not duplicate the generated plugin in inline config', () => {
   const plugin = 'file:///tmp/agent-office-opencode.mjs';
   const merged = JSON.parse(mergeOpenCodeConfigContent(JSON.stringify({ plugin: [plugin] }), plugin));
   assert.deepEqual(merged.plugin, [plugin]);
+});
+
+test('OpenCode permission rules include only the selected scoped office actions', () => {
+  assert.deepEqual(openCodePermissionRules({ officeState: true, agentDiscussion: false, pushBranch: true }), {
+    'agent-office_list_workers': 'allow',
+    'agent-office_push_branch': 'allow',
+  });
+  assert.deepEqual(openCodePermissionRules({ officeState: false, agentDiscussion: false, pushBranch: false }), {});
 });
 
 test('only OpenCode station agents get automatic permission for listing and messaging workers', () => {

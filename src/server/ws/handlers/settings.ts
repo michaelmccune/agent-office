@@ -133,4 +133,11 @@ export const settingsHandlers = {
     if (err) return ctx.warn(c, err);
     ctx.toastAll(choice ? `🤖 ${who} set the office’s default worker` : `🤖 ${who} put the office’s default worker back to ${path.basename(ctx.cfg.agentCmd)}`);
   },
+  'permissions.set'(ctx, c, msg) {
+    const who = c.peer.name;
+    if (!ctx.meOf(c.accountId).admin) return ctx.warn(c, 'Only admins can change agent permissions');
+    const err = ctx.permissions.set(msg.role, msg.action, msg.enabled, who);
+    if (err) return ctx.warn(c, err);
+    ctx.toastAll(`🔐 ${who} ${msg.enabled ? 'allowed' : 'kept approval for'} ${msg.action === 'officeState' ? 'viewing office state' : msg.action === 'agentDiscussion' ? 'agent discussions' : 'pushing the task branch'} for the ${msg.role} role`);
+  },
 } satisfies HandlerMap<SettingsClientMsg>;

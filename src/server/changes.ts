@@ -3,6 +3,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { ImageResult } from './decor.js';
 import { changedImageType, type ChangedFile, type ChangeStatus, type ChangesState } from '../shared/protocol.js';
+import { floorGhEnv, floorRepository } from './github-context.js';
 
 // What a worker changed, for the Changes window at its desk: the files it touched and their diff,
 // against the branch the office was opened on. While anyone has the window open, the office polls
@@ -24,6 +25,8 @@ export interface ChangesTarget {
   cwd: string;
   /** That directory relative to the office dir ('' for the project itself). */
   rel: string;
+  /** The selected GitHub repository owning this checkout. */
+  repository?: string;
   /** The commit its worktree branched from, when it has one. */
   worktreeBase?: string;
   /**
@@ -319,7 +322,9 @@ export class Changes {
       const remote = remotes.includes('origin') ? 'origin' : remotes[0];
       if (!remote) return 'This project has no git remote to push to';
       await git(['push', '-u', remote, s.branch], t.cwd, 120_000, env);
-      const r = await run('gh', ['pr', 'create', '--head', s.branch, '--base', s.prBase, '--title', title.trim(), '--body', body], t.cwd, 120_000, env);
+      const repository = floorRepository(t.repository);
+      const scopedEnv = floorGhEnv(repository, env);
+      const r = await run('gh', ['pr', 'create', ...(repository ? ['--repo', repository] : []), '--head', s.branch, '--base', s.prBase, '--title', title.trim(), '--body', body], t.cwd, 120_000, scopedEnv);
       const url = r.out.trim().split('\n').pop() ?? '';
       if (r.code !== 0 || !/^https?:\/\//.test(url)) throw new GitError(reason(r, url || 'gh pr create failed'));
       const number = Number(/\/(\d+)$/.exec(url)?.[1] ?? 0);

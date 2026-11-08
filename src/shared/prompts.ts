@@ -45,7 +45,7 @@ const BOARD: Record<StationKind, string> = {
 const JOB: Record<StationKind, string> = {
   issues: `You look after this repository's GitHub issues with the gh CLI: file new ones (a clear title, what's wrong or wanted, and how to reproduce it when that applies), find and sum them up, triage, label, comment on, close and reopen them. To get an issue worked on, put it on the task queue with its number.`,
   pulls: `You look after this repository's pull requests with the gh CLI: sum them up and review them (gh pr view, gh pr diff, gh pr checks), comment, approve or request changes, merge when you're asked to, and close stale ones. Read a PR's code with gh pr diff rather than checking its branch out here. To get changes made on a PR, queue a task that tells the worker to check out that PR's branch in its worktree (gh pr checkout), make the fix and push it.`,
-  queue: `You run the office's task queue, and adding to it is the only way you get anything done. Whatever you're asked for, even a one-line fix, and even when someone asks you to do it yourself, you put it on the queue and report what you queued. You never do the work: you don't edit, create or delete files, you don't run builds, tests or installs, and you don't write code, not even a snippet to show how. Read the code and gh issue list only as far as it takes to write a good task. Add one task per independent piece of work, each prompt complete on its own (what to change and where, how to check it, and to open a pull request), since the worker who picks it up knows nothing else. Link a task to its GitHub issue when it's for one. You also say what's queued, running and finished, and take waiting tasks off when asked.`,
+  queue: `You run the office's task queue, and adding to it is the only way you get anything done. Whatever you're asked for, even a one-line fix, and even when someone asks you to do it yourself, you put it on the queue and report what you queued. You never do the work: you don't edit, create or delete files, you don't run builds, tests or installs, and you don't write code, not even a snippet to show how. Read the code and the active floor's repository-scoped issue list only as far as it takes to write a good task. Add one task per independent piece of work, each prompt complete on its own (what to change and where, how to check it, and to open a pull request), since the worker who picks it up knows nothing else. Link a task to its GitHub issue when it's for one. You also say what's queued, running and finished, and take waiting tasks off when asked.`,
 };
 
 /** How a board agent reaches the queue: the office-queue command, which the office puts on its PATH. */
@@ -81,10 +81,10 @@ const station = (kind: StationKind): PromptDef => ({
 
 // --- Placeholders several prompts share -----------------------------------------------------------
 
-const ISSUE_VARS = { number: 'The issue number', title: 'The issue title', url: 'Its page on GitHub' };
-const PULL_VARS = { number: 'The pull request number', title: 'Its title', url: 'Its page on GitHub', branch: 'Its branch', base: 'The branch it merges into' };
-const MERGE_VARS = { ...PULL_VARS, repo: 'owner/name of the repository', merge: 'The gh pr merge command for the method (and branch deletion) picked in the merge dialog' };
-const CHECKOUT = 'Get onto its branch: `gh pr checkout {{number}}`. If git says `{{branch}}` is already checked out in another worktree, use `git fetch origin {{branch}} && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:{{branch}}`.';
+const ISSUE_VARS = { number: 'The issue number', title: 'The issue title', url: 'Its page on GitHub', repo: 'owner/name of the active floor repository' };
+const PULL_VARS = { number: 'The pull request number', title: 'Its title', url: 'Its page on GitHub', branch: 'Its branch', base: 'The branch it merges into', repo: 'owner/name of the active floor repository' };
+const MERGE_VARS = { ...PULL_VARS, merge: 'The gh pr merge command for the method (and branch deletion) picked in the merge dialog' };
+const CHECKOUT = 'Get onto its branch: `gh pr checkout {{number}} --repo {{repo}}`. If git says `{{branch}}` is already checked out in another worktree, use `git fetch origin {{branch}} && git checkout --detach FETCH_HEAD` instead and push with `git push origin HEAD:{{branch}}`.';
 const OUTPUT = "That file is the meeting's output.";
 const FILE_NOTE = 'The note this part is written to, which the meeting waits for';
 const OUTPUT_NOTE = "The meeting's output file, which ends it";
@@ -96,7 +96,7 @@ const DEFS = {
     label: '🤖 Hand to a worker',
     used: 'The task a worker gets for an issue: 🤖 Hand to a worker, 📋 Add to queue, and a card carried to a desk or the queue.',
     vars: ISSUE_VARS,
-    text: 'Work on GitHub issue #{{number}}: "{{title}}".\n\nRead it first with `gh issue view {{number}} --comments`. Create a new branch, implement the change, verify it, then open a pull request that closes #{{number}}.',
+    text: 'Work on GitHub issue #{{number}}: "{{title}}" in `{{repo}}`.\n\nRead it first with `gh issue view {{number}} --comments --repo {{repo}}`. Create a new branch, implement the change, verify it, then open a pull request with `gh pr create --repo {{repo}}` that closes #{{number}}.',
   },
   'issue.ask': {
     group: 'issues',
@@ -104,14 +104,14 @@ const DEFS = {
     used: 'Told to the worker ahead of your own words when you ✍️ Ask a worker about an issue.',
     vars: ISSUE_VARS,
     optional: true,
-    text: 'This is about GitHub issue #{{number}} "{{title}}" ({{url}}). Read it with `gh issue view {{number}} --comments`.',
+    text: 'This is about GitHub issue #{{number}} "{{title}}" ({{url}}) in `{{repo}}`. Read it with `gh issue view {{number}} --comments --repo {{repo}}`.',
   },
   'issue.meeting': {
     group: 'issues',
     label: '🤝 Meeting about it',
     used: 'What a 🤝 Meeting about an issue is about, to start with: the meeting form opens with it filled in.',
     vars: ISSUE_VARS,
-    text: 'GitHub issue #{{number}}: “{{title}}”. Read it first with gh issue view {{number}} --comments.',
+    text: 'GitHub issue #{{number}}: “{{title}}” in `{{repo}}`. Read it first with `gh issue view {{number}} --comments --repo {{repo}}`.',
   },
 
   // --- 🔀 Pull requests board ---
@@ -120,7 +120,7 @@ const DEFS = {
     label: '🔍 Review',
     used: 'What 🔍 Review on an open pull request sends a worker.',
     vars: PULL_VARS,
-    text: "Review pull request #{{number}}: \"{{title}}\".\n\nUse `gh pr view {{number}} --comments` and `gh pr diff {{number}}`. Look for bugs, risky changes and missing tests, then give me a short summary with concrete suggestions. Don't push any commits.",
+    text: "Review pull request #{{number}}: \"{{title}}\" in `{{repo}}`.\n\nUse `gh pr view {{number}} --comments --repo {{repo}}` and `gh pr diff {{number}} --repo {{repo}}`. Look for bugs, risky changes and missing tests, then give me a short summary with concrete suggestions. Don't push any commits.",
   },
   'pull.fixMerge': {
     group: 'pulls',
@@ -131,10 +131,10 @@ const DEFS = {
       'Get pull request #{{number}} "{{title}}" ({{url}}) ready and merge it.',
       '',
       `1. ${CHECKOUT}`,
-      '2. Read all the feedback: `gh pr view {{number}} --comments`, and the comments on lines of code with `gh api repos/{{repo}}/pulls/{{number}}/comments`.',
+      '2. Read all the feedback: `gh pr view {{number}} --comments --repo {{repo}}`, and the comments on lines of code with `gh api repos/{{repo}}/pulls/{{number}}/comments`.',
       '3. Address every review comment that is still open: fix it, or if you disagree, reply on the PR saying why. If the branch conflicts with `{{base}}`, merge `{{base}}` in and resolve the conflicts.',
       '4. Verify your changes the way this project does (build, typecheck, tests), then commit and push.',
-      '5. Wait for the checks with `gh pr checks {{number}} --watch` and fix anything that fails.',
+      '5. Wait for the checks with `gh pr checks {{number}} --watch --repo {{repo}}` and fix anything that fails.',
       '6. When the checks pass and no feedback is left, merge it: `{{merge}}`. If something only a person can decide is in the way, stop and tell me instead of merging.',
     ].join('\n'),
   },
@@ -148,9 +148,9 @@ const DEFS = {
       '',
       `1. ${CHECKOUT}`,
       '2. Bring in the latest `{{base}}`: `git fetch origin {{base}} && git merge origin/{{base}}`.',
-      "3. Resolve every conflict so both sides' changes survive. Read the PR (`gh pr view {{number}}`) and the `{{base}}` commits that touched the same code to see what each side meant; don't just take one side.",
+      "3. Resolve every conflict so both sides' changes survive. Read the PR (`gh pr view {{number}} --repo {{repo}}`) and the `{{base}}` commits that touched the same code to see what each side meant; don't just take one side.",
       '4. Verify the result the way this project does (build, typecheck, tests), then commit the merge and push.',
-      '5. Wait for the checks with `gh pr checks {{number}} --watch` and fix anything that fails.',
+      '5. Wait for the checks with `gh pr checks {{number}} --watch --repo {{repo}}` and fix anything that fails.',
       '6. When the checks pass, merge it: `{{merge}}`. If a conflict needs a decision only a person can make, stop and tell me instead of merging.',
     ].join('\n'),
   },
@@ -160,7 +160,7 @@ const DEFS = {
     used: 'Told to the worker ahead of your own words when you ✍️ Ask a worker about a pull request.',
     vars: PULL_VARS,
     optional: true,
-    text: 'This is about pull request #{{number}} "{{title}}" ({{url}}), branch `{{branch}}` into `{{base}}`. Read it with `gh pr view {{number}} --comments` and see its changes with `gh pr diff {{number}}`.',
+    text: 'This is about pull request #{{number}} "{{title}}" ({{url}}) in `{{repo}}`, branch `{{branch}}` into `{{base}}`. Read it with `gh pr view {{number}} --comments --repo {{repo}}` and see its changes with `gh pr diff {{number}} --repo {{repo}}`.',
   },
   'pull.panel': {
     group: 'pulls',
@@ -198,6 +198,8 @@ const DEFS = {
       '',
       "- Make every change inside these folders. The projects' own checkouts are other people's and other workers': don't edit them, switch their branches, stash or reset them.",
       '- cd into a project\'s folder before running git or its tools, read its own instructions (CLAUDE.md, AGENTS.md, README) before changing it, and install its dependencies there when you need them.',
+      '- `GH_REPO` defaults to {{home}} and does not change when you cd. For GitHub commands in another folder, always pass that folder\'s exact owner/name with `--repo`; for `gh api`, use a fully qualified `repos/<owner>/<name>/...` endpoint. Never infer the second repository from gh\'s default or its remotes.',
+      '- If a folder has no owner/name in the list, do not run floor-scoped GitHub commands there until the person supplies its repository identity; never infer it from a remote or folder name.',
       "- When the task spans projects, keep them working together and test them together. Commit in each project you change.",
       '- Each project gets its own pull request, from its folder. An issue number in your task (#12) is one of {{home}}\'s; in the other projects\' pull requests write it as {{home}}#12. When you open the pull requests yourself, name the others in each description so they are reviewed and merged together.',
     ].join('\n'),
@@ -220,8 +222,9 @@ const DEFS = {
       others: 'The other roles at the table',
       how: 'How the rounds of this kind of meeting go',
       about: 'What the meeting is about, as it was called',
-      pullRequest: 'For a pull request: a line saying which and how to read it (empty otherwise)',
-      issue: 'For an issue: a line saying which and how to read it (empty otherwise)',
+      repo: 'owner/name of the active floor repository',
+      pullRequest: 'For a pull request: a line saying which repository it is in and how to read it (empty otherwise)',
+      issue: 'For an issue: a line saying which repository it is in and how to read it (empty otherwise)',
       cwd: 'Their working directory',
       notes: "The notes folder, where they read each other's parts",
       output: "The output file, as it's named in the project",
@@ -346,9 +349,9 @@ const DEFS = {
     group: 'meetings',
     label: 'Review panel · review',
     used: 'Round 1 of a Review panel, for each reviewer. A note that says just NO FINDINGS counts as nothing found.',
-    vars: { pr: 'The pull request number', role: 'Their lens: Security, Performance…', file: FILE_NOTE },
+    vars: { pr: 'The pull request number', repo: 'owner/name of the active floor repository', role: 'Their lens: Security, Performance…', file: FILE_NOTE },
     needs: ['file'],
-    text: "Review pull request #{{pr}} through your lens, {{role}}, and nothing else. Read it with gh pr view {{pr}} and gh pr diff {{pr}}; don't check it out or change any files. Write your findings to {{file}}, one per bullet: the file:line, what's wrong and what to do about it, the most serious first. If you find nothing, write just NO FINDINGS. Then end your turn.",
+    text: "Review pull request #{{pr}} in `{{repo}}` through your lens, {{role}}, and nothing else. Read it with `gh pr view {{pr}} --repo {{repo}}` and `gh pr diff {{pr}} --repo {{repo}}`; don't check it out or change any files. Write your findings to {{file}}, one per bullet: the file:line, what's wrong and what to do about it, the most serious first. If you find nothing, write just NO FINDINGS. Then end your turn.",
   },
   'meeting.review.combine': {
     group: 'meetings',

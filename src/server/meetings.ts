@@ -10,6 +10,7 @@ import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { providerMeta, takesEffort, takesModel } from '../shared/providers.js';
 import { gitError, type WorktreeRef, type WorktreeState } from './worktrees.js';
 import { PROMPTS, fillPrompt, type PromptId, type PromptVars } from '../shared/prompts.js';
+import { floorItemReadContext, floorRepository } from './github-context.js';
 
 const execFileP = promisify(execFile);
 
@@ -36,6 +37,7 @@ export interface MeetingTrees {
 }
 
 export interface MeetingEvents {
+  repository?: string;
   update(state: MeetingState): void;
   toast(text: string, level: 'info' | 'warn' | 'error'): void;
   /** Why nobody may be hired right now (today's budget is spent), if that's so. */
@@ -504,9 +506,6 @@ export class MeetingRoom {
     return true;
   }
 
-  // --- The patterns ----------------------------------------------------------
-
-  /** What every worker is told when it sits down, ahead of its first part. */
   private brief(m: Meeting, i: number): string {
     const p = MEETING_PATTERNS[m.pattern];
     const role = m.seats[i].role;
@@ -524,8 +523,8 @@ export class MeetingRoom {
       : m.pattern === 'review'
         ? `This is a review: don't change, commit or push anything in the checkout. The only files you write are your notes${i === 0 ? ` and ${m.output}` : ''}.`
         : `You all share one git worktree, on the branch ${m.worktree.branch}. Don't commit, push or switch branches: when the meeting is over, the office commits ${m.output}, with whatever else was changed, there.`;
-    // The worktree sits inside the project's own folder, where a search can wander off to.
     const inside = m.worktree ? ` The whole project is checked out in your working directory: read and write files there, by paths inside it, and never in a folder above it.` : '';
+    const repository = floorRepository(this.events.repository);
     return this.say('meeting.brief', {
       title: m.title,
       role,
@@ -533,8 +532,9 @@ export class MeetingRoom {
       others: list(others),
       how: how[m.pattern],
       about: m.prompt,
-      pullRequest: m.pr !== undefined ? `The pull request is #${m.pr}: read it with gh pr view ${m.pr} and gh pr diff ${m.pr}.` : '',
-      issue: m.issue !== undefined ? `It comes from GitHub issue #${m.issue}: gh issue view ${m.issue} --comments.` : '',
+      repo: repository ?? 'not provided',
+      pullRequest: m.pr !== undefined ? floorItemReadContext('pull', m.pr, this.events.repository) : '',
+      issue: m.issue !== undefined ? floorItemReadContext('issue', m.issue, this.events.repository) : '',
       cwd: this.cwd(m),
       notes: path.join(this.cwd(m), m.notes),
       output: m.output,
@@ -544,7 +544,6 @@ export class MeetingRoom {
     });
   }
 
-  /** One of the office's prompts, filled in. */
   private say(id: PromptId, vars: PromptVars = {}): string {
     return fillPrompt(this.events.prompt?.(id) ?? PROMPTS[id].text, vars);
   }
@@ -624,7 +623,7 @@ export class MeetingRoom {
             seat: i,
             doing: 'reviewing',
             file: note(1, i),
-            ask: this.say('meeting.review.review', { pr: m.pr, role: m.seats[i].role, file: A(note(1, i)) }),
+            ask: this.say('meeting.review.review', { pr: m.pr, repo: floorRepository(this.events.repository) ?? 'not provided', role: m.seats[i].role, file: A(note(1, i)) }),
           }));
         }
         return [{ seat: 0, doing: 'writing the review', file: m.output, ask: this.say('meeting.review.combine', { findings: notes(1, all), exampleRole: m.seats[1]?.role ?? 'Security', output: A(m.output) }) }];

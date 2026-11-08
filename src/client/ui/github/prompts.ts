@@ -1,6 +1,6 @@
 import type { AgentEffort, AgentProvider, GhIssue, GhMergeMethod, GhPull } from '../../../shared/protocol';
+import { normalizeRepo } from '../../../shared/floors';
 import { store } from '../../state';
-import { repoUrlOf } from '../markdown';
 import type { MeetingPreset } from '../meeting';
 import { officePrompt } from '../prompts';
 
@@ -28,17 +28,23 @@ export function issuePrompt(it: Pick<GhIssue, 'number' | 'title'> & { url?: stri
 
 /** What an issue's prompts fill in. A carried card has no URL, but the board usually knows it. */
 export function issueVars(it: Pick<GhIssue, 'number' | 'title'> & { url?: string }) {
-  return { number: it.number, title: it.title, url: it.url ?? store.issues.items.find((i) => i.number === it.number)?.url ?? '' };
+  const url = it.url ?? store.issues.items.find((i) => i.number === it.number)?.url ?? '';
+  return { number: it.number, title: it.title, url, repo: boardRepository(url) };
 }
 
 /** owner/repo from a PR or issue URL. */
 function nameWithOwner(url: string): string {
-  return repoUrlOf(url).replace(/^https?:\/\/[^/]+\//, '');
+  return normalizeRepo(url) ?? '';
+}
+
+/** The floor's selected repository wins over an item's URL; the URL is a fallback for an explicit item. */
+function boardRepository(url: string): string {
+  return store.floors.find((floor) => floor.id === store.floor)?.repo || nameWithOwner(url);
 }
 
 /** What a pull request's prompts fill in. */
 export function pullVars(it: GhPull) {
-  return { number: it.number, title: it.title, url: it.url, branch: it.headRefName, base: it.baseRefName };
+  return { number: it.number, title: it.title, url: it.url, branch: it.headRefName, base: it.baseRefName, repo: boardRepository(it.url) };
 }
 
 export function reviewPrompt(it: GhPull) {
@@ -46,11 +52,12 @@ export function reviewPrompt(it: GhPull) {
 }
 
 function mergeCommand(it: GhPull, method: GhMergeMethod, deleteBranch: boolean) {
-  return `gh pr merge ${it.number} --${method}${deleteBranch ? ' --delete-branch' : ''} --repo ${nameWithOwner(it.url)}`;
+  return `gh pr merge ${it.number} --${method}${deleteBranch ? ' --delete-branch' : ''} --repo ${boardRepository(it.url)}`;
 }
 
 function mergeVars(it: GhPull, method: GhMergeMethod, deleteBranch: boolean) {
-  return { ...pullVars(it), repo: nameWithOwner(it.url), merge: mergeCommand(it, method, deleteBranch) };
+  const vars = pullVars(it);
+  return { ...vars, merge: mergeCommand(it, method, deleteBranch) };
 }
 
 export function fixAndMergePrompt(it: GhPull, method: GhMergeMethod, deleteBranch: boolean) {

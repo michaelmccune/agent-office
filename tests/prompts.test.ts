@@ -7,7 +7,9 @@ import { PROMPTS, PROMPT_IDS, PROMPT_MAX, fillPrompt, placeholders, promptText }
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import { stationBrief } from '../src/server/stations.js';
 import { TaskQueue, type QueueWorkers } from '../src/server/queue.js';
-import type { AgentChoice, PromptsState, WorkerInfo } from '../src/shared/protocol.js';
+import { issueVars, pullVars, reviewPrompt } from '../src/client/ui/github/prompts.js';
+import { store } from '../src/client/state/index.js';
+import type { AgentChoice, FloorInfo, GhIssue, GhPull, PromptsState, WorkerInfo } from '../src/shared/protocol.js';
 
 function scratch(t: { after(fn: () => void): void }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'office-prompts-'));
@@ -37,15 +39,51 @@ test('every default only uses placeholders it says it has, and names the ones th
 
 test('the boards send what they always did', () => {
   assert.equal(
-    fillPrompt(PROMPTS['issue.work'].text, { number: 7, title: 'Dog barks', url: 'u' }),
-    'Work on GitHub issue #7: "Dog barks".\n\nRead it first with `gh issue view 7 --comments`. Create a new branch, implement the change, verify it, then open a pull request that closes #7.',
+    fillPrompt(PROMPTS['issue.work'].text, { number: 7, title: 'Dog barks', url: 'u', repo: 'michaelmccune/agent-office' }),
+    'Work on GitHub issue #7: "Dog barks" in `michaelmccune/agent-office`.\n\nRead it first with `gh issue view 7 --comments --repo michaelmccune/agent-office`. Create a new branch, implement the change, verify it, then open a pull request with `gh pr create --repo michaelmccune/agent-office` that closes #7.',
   );
   const merge = fillPrompt(PROMPTS['pull.fixMerge'].text, { number: 5, title: 'T', url: 'https://github.com/o/r/pull/5', branch: 'feat', base: 'main', repo: 'o/r', merge: 'gh pr merge 5 --squash --repo o/r' });
-  assert.match(merge, /^Get pull request #5 "T" \(https:\/\/github\.com\/o\/r\/pull\/5\) ready and merge it\.\n\n1\. Get onto its branch: `gh pr checkout 5`\. If git says `feat` is already checked out/);
+  assert.match(merge, /^Get pull request #5 "T" \(https:\/\/github\.com\/o\/r\/pull\/5\) ready and merge it\.\n\n1\. Get onto its branch: `gh pr checkout 5 --repo o\/r`\. If git says `feat` is already checked out/);
   assert.match(merge, /git push origin HEAD:feat/);
+  assert.match(merge, /gh pr view 5 --comments --repo o\/r/);
   assert.match(merge, /gh api repos\/o\/r\/pulls\/5\/comments/);
+  assert.match(merge, /gh pr checks 5 --watch --repo o\/r/);
   assert.match(merge, /6\. When the checks pass and no feedback is left, merge it: `gh pr merge 5 --squash --repo o\/r`\./);
   assert.doesNotMatch(merge, /\{\{/);
+});
+
+test('issue, PR, meeting, and multi-repository prompts name the intended repository', () => {
+  const issue = fillPrompt(PROMPTS['issue.meeting'].text, { number: 2, title: 'Fork issue', url: 'https://github.com/michaelmccune/agent-office/issues/2', repo: 'michaelmccune/agent-office' });
+  assert.match(issue, /gh issue view 2 --comments --repo michaelmccune\/agent-office/);
+  const review = fillPrompt(PROMPTS['pull.review'].text, { number: 2, title: 'Fork PR', url: 'https://github.com/michaelmccune/agent-office/pull/2', branch: 'fix', base: 'main', repo: 'michaelmccune/agent-office' });
+  assert.match(review, /gh pr view 2 --comments --repo michaelmccune\/agent-office/);
+  assert.match(review, /gh pr diff 2 --repo michaelmccune\/agent-office/);
+  const panel = fillPrompt(PROMPTS['meeting.review.review'].text, { pr: 2, repo: 'michaelmccune/agent-office', role: 'Security', file: 'review.md' });
+  assert.match(panel, /gh pr view 2 --repo michaelmccune\/agent-office/);
+  assert.match(panel, /gh pr diff 2 --repo michaelmccune\/agent-office/);
+  const workspace = fillPrompt(PROMPTS['worker.repos'].text, {
+    home: 'michaelmccune/agent-office',
+    branch: 'office/test',
+    repos: '- `agent-office/`: michaelmccune/agent-office (home)\n- `api/`: acme/api',
+  });
+  assert.match(workspace, /GH_REPO` defaults to michaelmccune\/agent-office and does not change when you cd/);
+  assert.match(workspace, /exact owner\/name with `--repo`/);
+});
+
+test('board-generated issue and PR prompts prefer the selected floor over an upstream item URL', (t) => {
+  const oldFloor = store.floor;
+  const oldFloors = store.floors;
+  t.after(() => {
+    store.floor = oldFloor;
+    store.floors = oldFloors;
+  });
+  store.floor = 'fork-floor';
+  store.floors = [{ id: 'fork-floor', name: 'Agent Office', repo: 'michaelmccune/agent-office' } as unknown as FloorInfo];
+  const issue: GhIssue = { number: 2, title: 'Fork issue', state: 'OPEN', url: 'https://github.com/AgentSystemLabs/agent-office/issues/2', author: '', labels: [], assignees: [], createdAt: '', updatedAt: '', body: '', comments: 0 };
+  const pull: GhPull = { number: 2, title: 'Fork PR', state: 'OPEN', isDraft: false, url: 'https://github.com/AgentSystemLabs/agent-office/pull/2', author: '', labels: [], reviewDecision: '', headRefName: 'fix', baseRefName: 'main', createdAt: '', updatedAt: '', additions: 0, deletions: 0, checks: 'none', body: '', closes: [] };
+  assert.equal(issueVars(issue).repo, 'michaelmccune/agent-office');
+  assert.equal(pullVars(pull).repo, 'michaelmccune/agent-office');
+  assert.match(reviewPrompt(pull), /gh pr view 2 --comments --repo michaelmccune\/agent-office/);
 });
 
 test('a rewritten prompt is kept, used, and put back to the default', (t) => {
@@ -106,7 +144,9 @@ test('the default worker is checked before it is kept, and one the office can no
 
 test('a board agent is told its rewritten brief', () => {
   const source: PromptSource = { text: (id) => (id === 'station.pulls' ? 'You review PRs. The request:' : PROMPTS[id].text), agent: () => undefined };
-  assert.equal(stationBrief('pulls', source), 'You review PRs. The request:');
+  const brief = stationBrief('pulls', source, 'michaelmccune/agent-office');
+  assert.match(brief, /^You review PRs\.\n\nThe active floor's selected GitHub repository is `michaelmccune\/agent-office`/);
+  assert.ok(brief.endsWith('The request:'));
   assert.equal(stationBrief('issues', source), stationBrief('issues'));
   assert.match(stationBrief('queue'), /agent-office_list_workers.*agent-office_tell_worker/s);
   assert.match(stationBrief('queue'), /Other Agent Office tools keep the user's OpenCode permission settings/);

@@ -209,6 +209,7 @@ export class Floor {
 
     this.github = new GitHub(
       def.dir,
+      def.repo,
       (state) => ctx.emit(this, { t: 'gh.issues', state }),
       (state) => {
         ctx.emit(this, { t: 'gh.pulls', state });
